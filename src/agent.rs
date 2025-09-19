@@ -17,12 +17,12 @@ use agent_client_protocol::{
     ToolCallUpdateFields, ToolKind, V1,
 };
 use codex_core::{
-    config::Config as CodexConfig, protocol::{
+    AuthManager, CodexConversation, ConversationManager, NewConversation,
+    config::Config as CodexConfig,
+    protocol::{
         AskForApproval, EventMsg, InputItem, Op, ReviewDecision, SandboxPolicy, Submission,
         TokenUsage,
-    }, AuthManager, CodexConversation,
-    ConversationManager,
-    NewConversation,
+    },
 };
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot, oneshot::Sender};
@@ -115,6 +115,16 @@ impl CodexAgent {
             RequestPermissionOutcome::Cancelled => ReviewDecision::Abort,
         };
         decision
+    }
+
+    fn normalize_stream_chunk(chunk: String) -> String {
+        if chunk.trim_end().ends_with("**") && !chunk.ends_with("**\n") {
+            let mut chunk = chunk;
+            chunk.push_str("\n\n");
+            chunk
+        } else {
+            chunk
+        }
     }
 }
 
@@ -655,6 +665,9 @@ impl Agent for CodexAgent {
             },
         ]);
 
+        let mut saw_message_delta = false;
+        let mut saw_reasoning_delta = false;
+
         loop {
             let event = conversation
                 .next_event()
@@ -666,21 +679,30 @@ impl Agent for CodexAgent {
 
             match event.msg {
                 EventMsg::AgentMessageDelta(delta) => {
+                    let chunk = Self::normalize_stream_chunk(delta.delta);
+                    saw_message_delta = true;
                     let (tx, rx) = oneshot::channel();
-                    self.send_message_chunk(&args.session_id, delta.delta.into(), tx)?;
+                    self.send_message_chunk(&args.session_id, chunk.into(), tx)?;
                     rx.await.map_err(Error::into_internal_error)?;
                 }
                 EventMsg::AgentMessage(msg) => {
+                    if saw_message_delta {
+                        continue;
+                    }
                     let (tx, rx) = oneshot::channel();
                     self.send_message_chunk(&args.session_id, msg.message.into(), tx)?;
                     rx.await.map_err(Error::into_internal_error)?;
                 }
                 EventMsg::AgentReasoningDelta(delta) => {
+                    saw_reasoning_delta = true;
                     let (tx, rx) = oneshot::channel();
                     self.send_message_chunk(&args.session_id, delta.delta.into(), tx)?;
                     rx.await.map_err(Error::into_internal_error)?;
                 }
                 EventMsg::AgentReasoning(reason) => {
+                    if saw_reasoning_delta {
+                        continue;
+                    }
                     let (tx, rx) = oneshot::channel();
                     self.send_message_chunk(&args.session_id, reason.text.into(), tx)?;
                     rx.await.map_err(Error::into_internal_error)?;

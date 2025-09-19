@@ -273,6 +273,8 @@ Notes for Agents
             }
 
             // Stream events for this submission using the same loop as in prompt
+            let mut saw_message_delta = false;
+
             loop {
                 let event = session
                     .conversation
@@ -286,13 +288,15 @@ Notes for Agents
                 }
                 match event.msg {
                     EventMsg::AgentMessageDelta(delta) => {
+                        let chunk = Self::normalize_stream_chunk(delta.delta);
+                        saw_message_delta = true;
                         let (tx, rx) = oneshot::channel();
                         self.session_update_tx
                             .send((
                                 SessionNotification {
                                     session_id: session_id.clone(),
                                     update: SessionUpdate::AgentMessageChunk {
-                                        content: delta.delta.into(),
+                                        content: chunk.into(),
                                     },
                                     meta: None,
                                 },
@@ -302,6 +306,9 @@ Notes for Agents
                         let _ = rx.await;
                     }
                     EventMsg::AgentMessage(msg) => {
+                        if saw_message_delta {
+                            continue;
+                        }
                         let (tx, rx) = oneshot::channel();
                         self.send_message_chunk(session_id, msg.message.into(), tx)?;
                         let _ = rx.await;
