@@ -61,9 +61,8 @@ impl CodexAgent {
                 let rest = _rest.trim();
                 let force = matches!(rest, "--force" | "-f" | "force");
 
-                let cwd = self.config.cwd.clone();
                 // If any AGENTS* file already exists and not forcing, bail out.
-                let existing = self.find_agents_files();
+                let existing = self.find_agents_files(Some(session_id)).await;
                 if !existing.is_empty() && !force {
                     let msg = format!(
                         "AGENTS file already exists: {}\nUse /init --force to overwrite.",
@@ -76,7 +75,7 @@ impl CodexAgent {
                     return Ok(true);
                 }
 
-                let target = cwd.join("AGENTS.md");
+                let target = self.config.cwd.join("AGENTS.md");
                 let template = r#"# AGENTS.md
 
 This file gives Codex instructions for working in this repository. Place project-specific tips here so the agent acts consistently with your workflows.
@@ -105,25 +104,41 @@ Notes for Agents
 - Files in deeper directories with their own AGENTS.md override these rules.
 "#;
 
-                // Try to write the file; on errors, surface a message.
-                let result = (|| -> io::Result<()> {
-                    // Ensure parent exists (workspace root should exist already).
-                    if let Some(parent) = target.parent() {
-                        fs::create_dir_all(parent)?;
+                let msg = if self.client_supports_fs_write() {
+                    match self
+                        .client_write_text_file(session_id, target.clone(), template.to_string())
+                        .await
+                    {
+                        Ok(()) => format!(
+                            "Initialized AGENTS.md at {}\nEdit it to customize agent behavior.",
+                            self.shorten_home(&target)
+                        ),
+                        Err(err) => match self.write_text_file_locally(&target, template) {
+                            Ok(()) => format!(
+                                "Initialized AGENTS.md at {}\nEdit it to customize agent behavior. (client write failed: {})",
+                                self.shorten_home(&target),
+                                err.message
+                            ),
+                            Err(io_err) => format!(
+                                "Failed to create AGENTS.md via client filesystem ({}). Local write also failed: {}.\nPath: {}",
+                                err.message,
+                                io_err,
+                                self.shorten_home(&target)
+                            ),
+                        },
                     }
-                    fs::write(&target, template)
-                })();
-
-                let msg = match result {
-                    Ok(()) => format!(
-                        "Initialized AGENTS.md at {}\nEdit it to customize agent behavior.",
-                        self.shorten_home(&target)
-                    ),
-                    Err(e) => format!(
-                        "Failed to create AGENTS.md: {}\nPath: {}",
-                        e,
-                        self.shorten_home(&target)
-                    ),
+                } else {
+                    match self.write_text_file_locally(&target, template) {
+                        Ok(()) => format!(
+                            "Initialized AGENTS.md at {}\nEdit it to customize agent behavior.",
+                            self.shorten_home(&target)
+                        ),
+                        Err(e) => format!(
+                            "Failed to create AGENTS.md: {}\nPath: {}",
+                            e,
+                            self.shorten_home(&target)
+                        ),
+                    }
                 };
 
                 let (tx, rx) = oneshot::channel();
@@ -132,7 +147,7 @@ Notes for Agents
                 return Ok(true);
             }
             "status" => {
-                let status_text = self.render_status(&sid_str).await;
+                let status_text = self.render_status(session_id).await;
                 let (tx, rx) = oneshot::channel();
                 self.send_message_chunk(session_id, status_text.into(), tx)?;
                 rx.await.map_err(Error::into_internal_error)?;
@@ -378,7 +393,8 @@ Notes for Agents
         Ok(false)
     }
 
-    async fn render_status(&self, sid_str: &str) -> String {
+    async fn render_status(&self, session_id: &acp::SessionId) -> String {
+        let sid_str = session_id.0.as_ref();
         // Session snapshot
         let (approval_mode, sandbox_mode, token_usage, mut session_uuid) = {
             let map = self.sessions.borrow();
@@ -405,7 +421,7 @@ Notes for Agents
 
         // Workspace
         let cwd = self.shorten_home(&self.config.cwd);
-        let agents_files = self.find_agents_files();
+        let agents_files = self.find_agents_files(Some(session_id)).await;
         let agents_line = if agents_files.is_empty() {
             "(none)".to_string()
         } else {
@@ -521,16 +537,98 @@ Notes for Agents
         s
     }
 
-    fn find_agents_files(&self) -> Vec<String> {
+    async fn find_agents_files(&self, session_id: Option<&acp::SessionId>) -> Vec<String> {
         let mut names = Vec::new();
         let candidates = ["AGENTS.md", "Agents.md", "agents.md"];
-        for c in candidates.iter() {
-            let path = self.config.cwd.join(c);
-            if path.exists() {
-                names.push(c.to_string());
+
+        for candidate in candidates.iter() {
+            let path = self.config.cwd.join(candidate);
+            let mut found = false;
+
+            if let Some(session_id) = session_id
+                && self.client_supports_fs_read()
+                && self
+                    .client_read_text_file(session_id, path.clone(), Some(1), Some(1))
+                    .await
+                    .is_ok()
+            {
+                found = true;
+            }
+
+            if !found && path.exists() {
+                found = true;
+            }
+
+            if found {
+                names.push((*candidate).to_string());
             }
         }
+
         names
+    }
+
+    fn client_supports_fs_read(&self) -> bool {
+        self.client_capabilities.borrow().fs.read_text_file
+    }
+
+    fn client_supports_fs_write(&self) -> bool {
+        self.client_capabilities.borrow().fs.write_text_file
+    }
+
+    async fn client_read_text_file(
+        &self,
+        session_id: &acp::SessionId,
+        path: std::path::PathBuf,
+        line: Option<u32>,
+        limit: Option<u32>,
+    ) -> Result<acp::ReadTextFileResponse, Error> {
+        let (tx, rx) = oneshot::channel();
+        let request = acp::ReadTextFileRequest {
+            session_id: session_id.clone(),
+            path,
+            line,
+            limit,
+            meta: None,
+        };
+        self.client_tx
+            .send(ClientOp::ReadTextFile(request, tx))
+            .map_err(|_| {
+                Error::internal_error().with_data("client read_text_file channel closed")
+            })?;
+        rx.await.map_err(|_| {
+            Error::internal_error().with_data("client read_text_file response dropped")
+        })?
+    }
+
+    async fn client_write_text_file(
+        &self,
+        session_id: &acp::SessionId,
+        path: std::path::PathBuf,
+        content: String,
+    ) -> Result<(), Error> {
+        let (tx, rx) = oneshot::channel();
+        let request = acp::WriteTextFileRequest {
+            session_id: session_id.clone(),
+            path,
+            content,
+            meta: None,
+        };
+        self.client_tx
+            .send(ClientOp::WriteTextFile(request, tx))
+            .map_err(|_| {
+                Error::internal_error().with_data("client write_text_file channel closed")
+            })?;
+        let response = rx.await.map_err(|_| {
+            Error::internal_error().with_data("client write_text_file response dropped")
+        })?;
+        response.map(|_| ())
+    }
+
+    fn write_text_file_locally(&self, path: &std::path::Path, content: &str) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)
     }
 
     fn title_case(&self, s: &str) -> String {

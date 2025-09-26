@@ -14,6 +14,7 @@ An Agent Client Protocol (ACP)–compatible agent that bridges the OpenAI Codex 
 - Slash commands with ACP AvailableCommands updates (advertised to clients on session start).
 - Status output tailored for IDEs (workspace, account, model, token usage).
 - Supports ACP session modes: `read-only`, `auto` (default), and `full-access`.
+- Automatically launches an internal MCP filesystem server (`acp_fs`) so Codex reads/writes files through ACP tooling instead of shell commands.
 
 ## Requirements
 
@@ -36,6 +37,8 @@ RUST_LOG=info cargo run --quiet
 ```
 
 Because this agent speaks on stdio, it is intended to be spawned by your client. For manual testing, you can pipe ACP JSON-RPC messages to stdin and read replies from stdout.
+
+> Tip: use `make release` (or `cargo build --release`) when shipping the binary to an IDE like Zed. The release build lives at `target/release/codex-acp`.
 
 Example JSON-RPC (initialize → new session → /status):
 
@@ -78,6 +81,17 @@ make smoke
   }
 }
 ```
+
+The agent automatically boots an MCP filesystem bridge. No extra configuration (or AGENTS.md edits) are required—Codex will discover the `acp_fs` server on every session.
+
+## Filesystem tooling
+
+When a session starts, `codex-acp` spins up an in-process TCP bridge and registers an MCP server named `acp_fs`. Codex then calls two structured tools:
+
+- `read_text_file` — reads workspace files via ACP `client.read_text_file`, falling back to local disk if the client lacks FS support.
+- `write_text_file` — writes workspace files via ACP `client.write_text_file`, with a local fallback.
+
+`codex-acp` also injects a default instruction reminding the model to use these tools rather than shelling out with `cat`/`tee`. If your client exposes filesystem capabilities, file access stays within ACP.
 
 ## Features
 
