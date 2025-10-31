@@ -263,7 +263,6 @@ impl FsBridgeInner {
         };
         self.client_tx
             .send(ClientOp::ReadTextFile {
-                session_id,
                 request,
                 response_tx: tx,
             })
@@ -339,7 +338,6 @@ impl FsBridgeInner {
         };
         self.client_tx
             .send(ClientOp::WriteTextFile {
-                session_id,
                 request,
                 response_tx: tx,
             })

@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: build release run run-mock fmt clippy check test lint all smoke
+.PHONY: build release run run-mock fmt clippy check test lint all clean
 
 CARGO := cargo
 
@@ -27,7 +27,7 @@ test:
 
 lint: fmt clippy
 
-all: fmt clippy build
+clean:
+	$(CARGO) clean
 
-smoke:
-	./scripts/stdio-smoke.sh
+all: fmt clippy build

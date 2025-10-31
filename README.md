@@ -7,6 +7,27 @@
 
 An Agent Client Protocol (ACP)–compatible agent that bridges the OpenAI Codex runtime with ACP clients over stdio. This project is under active development — features are evolving and breaking changes are likely.
 
+## Architecture
+
+The agent is structured around several key modules:
+
+- **`agent/core.rs`** — Core ACP request handlers (`initialize`, `authenticate`, `new_session`, `load_session`, `prompt`, etc.) and `CodexAgent` implementation
+- **`agent/session_manager.rs`** — Unified session management including:
+  - Session state storage and mutation
+  - Session mode/model queries (`current_mode()`, `is_read_only()`, `resolve_acp_session_id()`)
+  - Conversation loading and caching
+  - Client update notifications
+  - Context override operations
+- **`agent/commands.rs`** — Slash command handlers (`/init`, `/status`, `/compact`, `/review`)
+- **`agent/events.rs`** — Codex Event → ACP update conversion; reasoning aggregation
+- **`agent/config_builder.rs`** — Session/conversation config construction (cwd, MCP servers, etc.)
+- **`fs/`** — Filesystem bridge and `acp_fs` MCP server implementation
+
+Key design principles:
+- `SessionManager` centralizes all session operations — both mutations and queries
+- `SessionState` is a pure data structure representing per-session state
+- The agent runs on Tokio's current-thread runtime with `LocalSet` for single-threaded async
+
 ## Highlights
 
 - Agent Client Protocol (ACP) over stdio using `agent-client-protocol`.
@@ -18,27 +39,39 @@ An Agent Client Protocol (ACP)–compatible agent that bridges the OpenAI Codex 
 
 ## Features
 
-- ACP Agent implementation
-  - Handles `initialize`, `authenticate`, `session/new`, `session/prompt`, `session/cancel`.
+- **ACP Agent implementation**
+  - Handles `initialize`, `authenticate`, `session/new`, `session/load`, `session/prompt`, `session/cancel`, `session/setMode`, `session/setModel`.
   - Authentication support for OpenAI (ChatGPT/API key) and custom model providers.
-  - Streams Codex events (assistant text and deltas, reasoning deltas, token counts) as `session/update` notifications.
+  - Streams Codex events (assistant messages, reasoning, token counts, tool calls) as `session/update` notifications.
+  - Event aggregation: reasoning deltas are accumulated and sent as complete blocks.
 
-- Slash commands (advertised via `AvailableCommandsUpdate`)
-  - Implemented:
-    - `/init` — Create an `AGENTS.md` with repository contributor guidance. Uses a bundled prompt (`src/agent/prompt_init_command.md`).
-    - `/status` — Rich status (workspace, account, model, token usage).
-    - `/compact` — Request Codex to compact/summarize the conversation to reduce context size.
-    - `/review` — Ask Codex to review current changes, highlight issues, and suggest fixes.
+- **Slash commands** (advertised via `AvailableCommandsUpdate`)
+  - `/init` — Create an `AGENTS.md` with repository contributor guidance. Uses a bundled prompt (`src/agent/prompt_init_command.md`).
+  - `/status` — Rich status output (workspace, account, model, token usage).
+  - `/compact` — Request Codex to compact/summarize the conversation to reduce context size.
+  - `/review` — Ask Codex to review current changes, highlight issues, and suggest fixes.
+  - Commands are dynamically advertised to clients on session start.
 
-- Session modes
-  - Advertises `read-only`, `auto` (current), and `full-access` on new session.
-  - Clients may switch modes via ACP `session/setMode`; the agent emits `CurrentModeUpdate`.
+- **Session modes**
+  - Three preset modes: `read-only`, `auto` (default), and `full-access`.
+  - Modes control approval policy and sandbox restrictions.
+  - Clients switch modes via `session/setMode`; agent emits `CurrentModeUpdate`.
+  - `SessionManager` provides `is_read_only()` to check mode restrictions.
 
-- Custom model provider support
+- **Custom model provider support**
   - Dynamic model listing and switching for custom (non-OpenAI) providers.
-  - Model format: `{provider_id}@{model_name}` (e.g., `anthropic@claude-3-opus`).
+  - Model format: `{provider_id}@{model_name}` (e.g., `OpenRouter@anthropic/claude-3-opus`).
   - Configure providers and models via Codex config profiles.
   - Dedicated `custom_provider` authentication method for non-builtin providers.
+  - Model switching enforces custom→custom provider transitions only.
+
+- **Session management**
+  - `SessionManager` provides unified interface for all session operations:
+    - State queries: `current_mode()`, `is_read_only()`, `resolve_acp_session_id()`
+    - Conversation management: lazy loading with caching
+    - Client notifications: `send_session_update()`, `send_message_chunk()`, `send_thought_chunk()`
+    - Context overrides: `apply_context_override()` for approval/sandbox/model changes
+  - Access via `agent.session_manager()` for read-only operations or internal mutation.
 
 ## Build
 
@@ -79,7 +112,11 @@ When a session starts, `codex-acp` spins up an in-process TCP bridge and registe
 
 `codex-acp` also injects a default instruction reminding the model to use these tools rather than shelling out with `cat`/`tee`. If your client exposes filesystem capabilities, file access stays within ACP.
 
-Note: The acp_fs tools are dynamically enabled or disabled based on the client's filesystem capabilities. If the client does not support reading files, `read_text_file` is hidden. If the client does not support writing files, `write_text_file`, `edit_text_file`, and `multi_edit_text_file` are hidden.
+**Dynamic tool availability:**
+- Tools are enabled/disabled based on client filesystem capabilities.
+- Read-only sessions disable write tools (`write_text_file`, `edit_text_file`, `multi_edit_text_file`).
+- If the client lacks FS support, tools fall back to local disk I/O.
+- The FS bridge uses a dedicated bridge address and session ID for MCP server communication.
 
 ## Status Output (`/status`)
 
@@ -127,11 +164,11 @@ For custom model providers (e.g., Anthropic, custom LLMs):
    ```toml
    model_provider_id = "anthropic"
    model = "claude-3-opus"
-   
+
    [model_providers.anthropic]
    name = "Anthropic"
    # ... provider-specific configuration
-   
+
    [profiles.custom-fast]
    model = "claude-3-haiku"
    model_provider = "anthropic"
@@ -143,7 +180,7 @@ For custom model providers (e.g., Anthropic, custom LLMs):
 
 ### Provider-Specific Features
 - **OpenAI**: Standard authentication, no model switching (uses config defaults)
-- **Custom Providers**: 
+- **Custom Providers**:
   - Model listing via `available_models` in session responses
   - Model switching via `session/setModel` with `{provider}@{model}` format
   - Multiple model profiles for easy switching
@@ -192,14 +229,9 @@ CODEX_LOG_STDERR=0 CODEX_LOG_FILE=./logs/codex-acp.log cargo run --quiet
 RUST_LOG=debug CODEX_LOG_DIR=./logs cargo run --quiet -- --acp-fs-mcp
 ```
 
-## Development
-
-- Branching: prefer topic branches; small, focused commits.
-- Lint/test locally using `cargo check`, `cargo fmt`, `cargo clippy`, and `cargo test`.
-- Logging: see the Logging section above for configuration. Typical dev setup: `RUST_LOG=info`.
-
 ## Related Projects
 
 - Zed ACP example (Claude): https://github.com/zed-industries/claude-code-acp
 - Agent Client Protocol (Rust): https://crates.io/crates/agent-client-protocol
 - OpenAI Codex (Rust workspace): https://github.com/openai/codex
+- rmcp (Rust MCP): https://github.com/domdomegg/rmcp

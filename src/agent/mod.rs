@@ -5,23 +5,13 @@ mod commands;
 mod config_builder;
 mod core;
 mod events;
-mod lifecycle;
 mod prompt;
-mod session;
-mod sessions;
+mod session_manager;
 mod utils;
 
 // Public exports
-pub use core::CodexAgent;
-pub use session::{ClientOp, SessionModeLookup};
-
-impl From<&CodexAgent> for SessionModeLookup {
-    fn from(agent: &CodexAgent) -> Self {
-        Self {
-            inner: agent.sessions.clone(),
-        }
-    }
-}
+pub use core::{ClientOp, CodexAgent};
+pub use session_manager::SessionManager;
 
 // Agent trait implementation - delegates to submodule methods
 #[async_trait::async_trait(?Send)]

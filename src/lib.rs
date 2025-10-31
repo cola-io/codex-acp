@@ -15,13 +15,13 @@ pub mod fs;
 pub mod logging;
 
 // Common re-exports for convenience.
-pub use agent::{CodexAgent, SessionModeLookup};
+pub use agent::{CodexAgent, SessionManager};
 pub use fs::FsBridge;
 pub use logging::{LoggingGuard, init_from_env};
 
 /// A small prelude with the most commonly used items when embedding the agent.
 pub mod prelude {
-    pub use crate::agent::{CodexAgent, SessionModeLookup};
+    pub use crate::agent::{CodexAgent, SessionManager};
     pub use crate::fs::FsBridge;
     pub use crate::logging::{LoggingGuard, init_from_env};
 }

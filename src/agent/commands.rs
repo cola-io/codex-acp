@@ -24,15 +24,17 @@ impl CodexAgent {
             "status" => {
                 let status_text = self.render_status(session_id).await;
                 drop(
-                    self.send_message_chunk(session_id, status_text.into())
+                    self.session_manager
+                        .send_message_chunk(session_id, status_text.into())
                         .await,
                 );
                 None
             }
             "compact" => {
-                self.with_session_state_mut(session_id, |state| {
-                    state.token_usage = None;
-                });
+                self.session_manager
+                    .with_session_state_mut(session_id, |state| {
+                        state.token_usage = None;
+                    });
                 msg = "🧠 Compacting conversation to reduce context size...\n\n".into();
                 Some(Op::Compact)
             }
@@ -49,7 +51,11 @@ impl CodexAgent {
         };
 
         if !msg.is_empty() {
-            drop(self.send_message_chunk(session_id, msg.into()).await);
+            drop(
+                self.session_manager
+                    .send_message_chunk(session_id, msg.into())
+                    .await,
+            );
         }
         op
     }
@@ -58,7 +64,7 @@ impl CodexAgent {
         let sid_str = session_id.0.as_ref();
         // Session snapshot
         let (approval_mode, sandbox_mode, token_usage) = {
-            if let Some(state) = self.sessions.borrow().get(sid_str) {
+            if let Some(state) = self.session_manager.sessions().borrow().get(sid_str) {
                 (
                     state.current_approval,
                     state.current_sandbox.clone(),

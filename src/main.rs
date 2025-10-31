@@ -1,4 +1,4 @@
-use codex_acp::{CodexAgent, FsBridge, SessionModeLookup, agent};
+use codex_acp::{CodexAgent, FsBridge, agent};
 
 use agent_client_protocol::{AgentSideConnection, Client, Error};
 use anyhow::{Result, bail};
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
         let profiles = config_toml.profiles;
         let fs_bridge = FsBridge::start(client_tx.clone(), config.cwd.clone()).await?;
         let agent = CodexAgent::with_config(tx, client_tx, config, profiles, Some(fs_bridge));
-        let session_modes = SessionModeLookup::from(&agent);
+        let session_manager = agent.session_manager().clone();
         let (conn, handle_io) = AgentSideConnection::new(agent, outgoing, incoming, |fut| {
             task::spawn_local(fut);
         });
@@ -64,12 +64,12 @@ async fn main() -> Result<()> {
                     }
                     op = client_rx.recv() => {
                         match op {
-                            Some(agent::ClientOp::RequestPermission { session_id: _, request: req, response_tx: tx }) => {
+                            Some(agent::ClientOp::RequestPermission { request: req, response_tx: tx }) => {
                                 let res = conn.request_permission(req).await;
                                 let _ = tx.send(res);
                             }
-                            Some(agent::ClientOp::ReadTextFile { session_id: _, request: mut req, response_tx: tx }) => {
-                                match session_modes.resolve_acp_session_id(&req.session_id) {
+                            Some(agent::ClientOp::ReadTextFile { request: mut req, response_tx: tx }) => {
+                                match session_manager.resolve_acp_session_id(&req.session_id) {
                                     Some(resolved_id) => {
                                         req.session_id = resolved_id;
                                         let res = conn.read_text_file(req).await;
@@ -82,11 +82,11 @@ async fn main() -> Result<()> {
                                     }
                                 }
                             }
-                            Some(agent::ClientOp::WriteTextFile { session_id: _, request: mut req, response_tx: tx }) => {
-                                match session_modes.resolve_acp_session_id(&req.session_id) {
+                            Some(agent::ClientOp::WriteTextFile { request: mut req, response_tx: tx }) => {
+                                match session_manager.resolve_acp_session_id(&req.session_id) {
                                     Some(resolved_id) => {
                                         req.session_id = resolved_id.clone();
-                                        if session_modes.is_read_only(&resolved_id) {
+                                        if session_manager.is_read_only(&resolved_id) {
                                             let err = Error::invalid_params()
                                                 .with_data("write_text_file is disabled while session mode is read-only");
                                             let _ = tx.send(Err(err));

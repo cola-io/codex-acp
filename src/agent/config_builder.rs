@@ -1,9 +1,9 @@
 use std::{collections::HashMap, env, time::Duration};
 
 use agent_client_protocol::{Error, HttpHeader, McpServer};
-use codex_core::{
-    config::Config as CodexConfig,
-    config_types::{McpServerConfig, McpServerTransportConfig},
+use codex_core::config::{
+    Config,
+    types::{McpServerConfig, McpServerTransportConfig},
 };
 
 use crate::fs::FsBridge;
@@ -44,7 +44,7 @@ impl CodexAgent {
             tool_timeout_sec: Some(Duration::from_secs(30)),
             enabled_tools: None,
             disabled_tools: {
-                let caps = self.client_capabilities.borrow();
+                let caps = self.session_manager.client_capabilities();
                 let mut v: Vec<String> = Vec::new();
                 if !caps.fs.read_text_file {
                     v.push("read_text_file".to_string());
@@ -152,7 +152,7 @@ impl CodexAgent {
         &self,
         session_id: &str,
         mcp_servers: Vec<McpServer>,
-    ) -> Result<CodexConfig, Error> {
+    ) -> Result<Config, Error> {
         let mut session_config = self.config.clone();
         let fs_guidance = include_str!("prompt_fs_guidance.md");
 
