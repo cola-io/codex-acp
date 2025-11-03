@@ -73,7 +73,7 @@ pub fn format_command_call(cwd: &Path, parsed_cmd: &[ParsedCommand]) -> FormatCo
                 kind = ToolKind::Search;
             }
             ParsedCommand::Unknown { cmd } => {
-                titles.push(format!("Run {cmd}"));
+                titles.push(format!("Ran {cmd}"));
                 terminal_output = true;
             }
         }

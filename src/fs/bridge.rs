@@ -4,11 +4,13 @@ use std::{
     sync::Arc,
 };
 
-use agent_client_protocol as acp;
+use agent_client_protocol::{ReadTextFileRequest, SessionId, WriteTextFileRequest};
+use serde::{Deserialize, Serialize};
 use tokio::{
+    fs,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
     net::{TcpListener, TcpStream},
-    sync::oneshot,
+    sync::{mpsc::UnboundedSender, oneshot},
     task,
 };
 use tracing::{debug, error, warn};
@@ -23,7 +25,7 @@ pub struct FsBridge {
 
 impl FsBridge {
     pub async fn start(
-        client_tx: tokio::sync::mpsc::UnboundedSender<ClientOp>,
+        client_tx: UnboundedSender<ClientOp>,
         workspace_root: PathBuf,
     ) -> anyhow::Result<Arc<FsBridge>> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
@@ -64,14 +66,14 @@ impl FsBridge {
     }
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum BridgeOp {
     Read,
     Write,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Deserialize)]
 struct BridgeRequest {
     id: u64,
     session_id: String,
@@ -82,7 +84,7 @@ struct BridgeRequest {
     content: Option<String>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Serialize)]
 struct BridgeResponse {
     id: u64,
     success: bool,
@@ -92,8 +94,30 @@ struct BridgeResponse {
     error: Option<String>,
 }
 
+impl BridgeResponse {
+    /// Create a new response with a success message.
+    fn success(id: u64, content: Option<String>) -> Self {
+        Self {
+            id,
+            success: true,
+            content,
+            error: None,
+        }
+    }
+
+    /// Create a new response with an error message.
+    fn error(id: u64, error: String) -> Self {
+        Self {
+            id,
+            success: false,
+            content: None,
+            error: Some(error),
+        }
+    }
+}
+
 struct FsBridgeInner {
-    client_tx: tokio::sync::mpsc::UnboundedSender<ClientOp>,
+    client_tx: UnboundedSender<ClientOp>,
     workspace_root: PathBuf,
 }
 
@@ -140,16 +164,11 @@ impl FsBridgeInner {
         let resolved_path = match self.resolve_path(&path) {
             Ok(p) => p,
             Err(err) => {
-                return BridgeResponse {
-                    id,
-                    success: false,
-                    content: None,
-                    error: Some(err),
-                };
+                return BridgeResponse::error(id, err);
             }
         };
 
-        let session_id = acp::SessionId(session_id.into());
+        let session_id = SessionId(session_id.into());
 
         match op {
             BridgeOp::Read => {
@@ -157,46 +176,21 @@ impl FsBridgeInner {
                     .read_with_fallback(&session_id, &resolved_path, line, limit)
                     .await
                 {
-                    Ok(text) => BridgeResponse {
-                        id,
-                        success: true,
-                        content: Some(text),
-                        error: None,
-                    },
-                    Err(err) => BridgeResponse {
-                        id,
-                        success: false,
-                        content: None,
-                        error: Some(err),
-                    },
+                    Ok(text) => BridgeResponse::success(id, Some(text)),
+                    Err(err) => BridgeResponse::error(id, err),
                 }
             }
             BridgeOp::Write => {
                 let Some(content) = content else {
-                    return BridgeResponse {
-                        id,
-                        success: false,
-                        content: None,
-                        error: Some("missing content for write".to_string()),
-                    };
+                    return BridgeResponse::error(id, "missing content for write".to_string());
                 };
 
                 match self
                     .write_with_fallback(&session_id, &resolved_path, content)
                     .await
                 {
-                    Ok(()) => BridgeResponse {
-                        id,
-                        success: true,
-                        content: None,
-                        error: None,
-                    },
-                    Err(err) => BridgeResponse {
-                        id,
-                        success: false,
-                        content: None,
-                        error: Some(err),
-                    },
+                    Ok(()) => BridgeResponse::success(id, None),
+                    Err(err) => BridgeResponse::error(id, err),
                 }
             }
         }
@@ -229,7 +223,7 @@ impl FsBridgeInner {
 
     async fn read_with_fallback(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &SessionId,
         path: &Path,
         line: Option<u32>,
         limit: Option<u32>,
@@ -248,13 +242,13 @@ impl FsBridgeInner {
 
     async fn read_via_client(
         &self,
-        session_id: acp::SessionId,
+        session_id: SessionId,
         path: String,
         line: Option<u32>,
         limit: Option<u32>,
     ) -> Result<String, String> {
         let (tx, rx) = oneshot::channel();
-        let request = acp::ReadTextFileRequest {
+        let request = ReadTextFileRequest {
             session_id: session_id.clone(),
             path: path.into(),
             line,
@@ -281,7 +275,7 @@ impl FsBridgeInner {
         line: Option<u32>,
         limit: Option<u32>,
     ) -> Result<String, String> {
-        let content = tokio::fs::read_to_string(path)
+        let content = fs::read_to_string(path)
             .await
             .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
 
@@ -303,7 +297,7 @@ impl FsBridgeInner {
 
     async fn write_with_fallback(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &SessionId,
         path: &Path,
         content: String,
     ) -> Result<(), String> {
@@ -325,12 +319,12 @@ impl FsBridgeInner {
 
     async fn write_via_client(
         &self,
-        session_id: acp::SessionId,
+        session_id: SessionId,
         path: String,
         content: String,
     ) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
-        let request = acp::WriteTextFileRequest {
+        let request = WriteTextFileRequest {
             session_id: session_id.clone(),
             path: path.into(),
             content,
@@ -352,14 +346,14 @@ impl FsBridgeInner {
 
     async fn write_locally(&self, path: &Path, content: String) -> Result<(), String> {
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|err| {
+            fs::create_dir_all(parent).await.map_err(|err| {
                 format!(
                     "failed to create parent directories {}: {err}",
                     parent.display()
                 )
             })?;
         }
-        tokio::fs::write(path, content)
+        fs::write(path, content)
             .await
             .map_err(|err| format!("failed to write {}: {err}", path.display()))
     }

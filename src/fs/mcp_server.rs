@@ -1,12 +1,12 @@
 use std::{
     collections::HashMap,
+    env,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
 
-use super::bridge;
 use anyhow::{Context, Result, anyhow};
 use diffy::{PatchFormatter, create_patch};
 use rmcp::{
@@ -17,6 +17,7 @@ use rmcp::{
         RawTextContent, ServerCapabilities, ServerInfo,
     },
     service, tool, tool_handler, tool_router,
+    transport::io,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,9 +25,13 @@ use serde_json::json;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
+    sync::Mutex,
     time::{Duration, timeout},
 };
 use tracing::info;
+
+use super::bridge;
+use crate::init_from_env;
 
 const DEFAULT_READ_LINE_LIMIT: u32 = 1000;
 const MAX_READ_BYTES: usize = 50 * 1024;
@@ -51,16 +56,16 @@ struct ReadSnippet {
 }
 
 pub async fn run() -> Result<()> {
-    let _logging = crate::logging::init_from_env()?;
+    let _logging = init_from_env()?;
     // Capture required env to talk to our local bridge and session.
-    let bridge_addr = std::env::var("ACP_FS_BRIDGE_ADDR")
+    let bridge_addr = env::var("ACP_FS_BRIDGE_ADDR")
         .context("ACP_FS_BRIDGE_ADDR environment variable is required")?;
-    let session_id = std::env::var("ACP_FS_SESSION_ID")
+    let session_id = env::var("ACP_FS_SESSION_ID")
         .context("ACP_FS_SESSION_ID environment variable is required")?;
 
     // Build an rmcp server over stdio with our tools.
     let server = FsTools::new(bridge_addr, session_id);
-    let transport = rmcp::transport::io::stdio();
+    let transport = io::stdio();
     // Serve and wait until the client closes the connection.
     let running = service::serve_server(server, transport).await?;
     let _ = running.waiting().await; // ignore quit reason
@@ -70,7 +75,7 @@ pub async fn run() -> Result<()> {
 // In-memory staging of edits to allow applying multi-step changes coherently.
 #[derive(Default, Clone)]
 struct StagedEdits {
-    entries: Arc<tokio::sync::Mutex<HashMap<String, StagedFile>>>,
+    entries: Arc<Mutex<HashMap<String, StagedFile>>>,
 }
 
 #[derive(Clone)]
