@@ -154,7 +154,7 @@ impl CodexAgent {
         mcp_servers: Vec<McpServer>,
     ) -> Result<Config, Error> {
         let mut session_config = self.config.clone();
-        let fs_guidance = include_str!("prompt_fs_guidance.md");
+        let fs_guidance = include_str!("../../prompt_fs_guidance.md");
 
         // Inject filesystem guidance into instructions
         if let Some(mut base) = session_config.base_instructions.take() {

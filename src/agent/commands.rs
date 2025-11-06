@@ -12,7 +12,7 @@ impl CodexAgent {
         let mut msg = String::default();
         let op = match name {
             "init" => {
-                let prompt = include_str!("prompt_init_command.md");
+                let prompt = include_str!("../../prompt_init_command.md");
 
                 msg = "📝 Creating AGENTS.md file with initial instructions...\n\n".into();
                 Some(Op::UserInput {
@@ -42,7 +42,7 @@ impl CodexAgent {
                 msg = "🔍 Asking Codex to review current changes...\n\n".into();
                 Some(Op::Review {
                     review_request: ReviewRequest {
-                        prompt: "review current changes".to_string(),
+                        prompt: "Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.".to_string(),
                         user_facing_hint: "current changes".to_string(),
                     },
                 })

@@ -1,4 +1,7 @@
-use codex_acp::{CodexAgent, FsBridge, agent};
+use codex_acp::{
+    CodexAgent, FsBridge,
+    agent::ClientOp::{ReadTextFile, RequestPermission, WriteTextFile},
+};
 
 use agent_client_protocol::{AgentSideConnection, Client, Error};
 use anyhow::{Result, bail};
@@ -64,11 +67,11 @@ async fn main() -> Result<()> {
                     }
                     op = client_rx.recv() => {
                         match op {
-                            Some(agent::ClientOp::RequestPermission { request: req, response_tx: tx }) => {
+                            Some(RequestPermission { request: req, response_tx: tx }) => {
                                 let res = conn.request_permission(req).await;
                                 let _ = tx.send(res);
                             }
-                            Some(agent::ClientOp::ReadTextFile { request: mut req, response_tx: tx }) => {
+                            Some(ReadTextFile { request: mut req, response_tx: tx }) => {
                                 match session_manager.resolve_acp_session_id(&req.session_id) {
                                     Some(resolved_id) => {
                                         req.session_id = resolved_id;
@@ -82,7 +85,7 @@ async fn main() -> Result<()> {
                                     }
                                 }
                             }
-                            Some(agent::ClientOp::WriteTextFile { request: mut req, response_tx: tx }) => {
+                            Some(WriteTextFile { request: mut req, response_tx: tx }) => {
                                 match session_manager.resolve_acp_session_id(&req.session_id) {
                                     Some(resolved_id) => {
                                         req.session_id = resolved_id.clone();
