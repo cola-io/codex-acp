@@ -1,6 +1,6 @@
 # Codex ACP Agent
 
-[![MSRV](https://img.shields.io/badge/MSRV-1.90%2B-blue.svg)](rust-toolchain.toml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.91%2B-blue.svg)](rust-toolchain.toml)
 [![Edition](https://img.shields.io/badge/Edition-2024-blueviolet.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 
 > Most of this repository code is implemented and reviewed by `codex` agents.
@@ -77,7 +77,7 @@ Key design principles:
 
 ### Requirements
 
-- Rust (Rust 2024 edition; rustc 1.90+ as pinned in `rust-toolchain.toml`).
+- Rust (Rust 2024 edition; rustc 1.91+ as pinned in `rust-toolchain.toml`).
 - Network access for building Git dependencies (Codex workspace, ACP crate).
 
 ```bash

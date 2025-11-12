@@ -272,6 +272,8 @@ impl CodexAgent {
                         stdout: _,
                         stderr: _,
                         success,
+                        turn_id: _,
+                        changes: _,
                     } = event;
 
                     let update = event_handler.on_patch_apply_end(&call_id, success, raw_output);

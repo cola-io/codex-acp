@@ -44,6 +44,7 @@ impl CodexAgent {
                     review_request: ReviewRequest {
                         prompt: "Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.".to_string(),
                         user_facing_hint: "current changes".to_string(),
+                        append_to_original_thread: false,
                     },
                 })
             }
