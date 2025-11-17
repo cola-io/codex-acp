@@ -17,7 +17,7 @@ use tracing::error;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let _logging = codex_acp::init_from_env()?;
+    codex_acp::init_from_env()?;
 
     if env::args().nth(1).as_deref() == Some("--acp-fs-mcp") {
         return codex_acp::fs::run_mcp_server().await;

@@ -5,9 +5,9 @@ This document describes how to work in this repo using idiomatic Rust patterns a
 ## Project Structure
 
 - src/
-  - lib.rs — library crate root; exposes `agent`, `fs`, `logging`; re-exports `CodexAgent`, `SessionManager`, `FsBridge`, `LoggingGuard`, and `init_from_env` for embedders.
+  - lib.rs — library crate root; exposes `agent`, `fs`, `logging`; re-exports `CodexAgent`, `SessionManager`, `FsBridge`, and `init_from_env` for embedders.
   - main.rs — binary entrypoint; initializes tracing, loads config + profiles, boots the filesystem bridge, and wires the ACP runtime. Pass `--acp-fs-mcp` to run the standalone filesystem MCP server.
-  - logging.rs — tracing init helpers driven by env variables (`init_from_env`, `LoggingGuard`), including optional file logging and daily rotation.
+  - logging.rs — tracing init helpers driven by env variables (`init_from_env`), including optional file logging and daily rotation.
   - agent/
     - mod.rs — Agent trait façade; wires ACP trait methods into `CodexAgent` and re-exports `ClientOp`.
     - core.rs — defines `CodexAgent` and `ClientOp`, handles initialize/auth/new/load session, and applies session mode/model mutations while coordinating the auth/conversation managers.

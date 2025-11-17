@@ -13,11 +13,11 @@
 //! - RUST_LOG: standard logging filter (e.g., "info", "debug", "codex_acp=trace,rmcp=info").
 //!
 //! Usage:
-//! - Call `init_from_env()` at process startup and hold on to the returned `LoggingGuard`
-//!   for the lifetime of the program to ensure logs are flushed on shutdown.
+//! - Call `init_from_env()` at process startup to initialize logging.
+//!   The logging guard is stored globally and will flush logs on process shutdown.
 //!
 //! Example:
-//!     let _logging = codex_acp::logging::init_from_env()?;
+//!     codex_acp::logging::init_from_env()?;
 //!     // run application...
 //!
 //! Notes:
@@ -25,37 +25,34 @@
 //! - ANSI color is disabled for file output to keep logs clean.
 //! - Parent directories for CODEX_LOG_FILE/CODEX_LOG_DIR are created if needed.
 
-use std::{env, fs, fs::OpenOptions, path::Path};
+use std::{env, fs, fs::OpenOptions, path::Path, sync::OnceLock};
 
 use anyhow::Result;
 use tracing_appender::non_blocking::{self, WorkerGuard};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-/// A guard that keeps the non-blocking file writer alive until dropped,
+/// Global guard that keeps the non-blocking file writer alive,
 /// ensuring logs are flushed on process shutdown.
-pub struct LoggingGuard {
-    _file_guard: Option<WorkerGuard>,
-}
-
-impl LoggingGuard {
-    fn none() -> Self {
-        Self { _file_guard: None }
-    }
-    fn with_guard(guard: WorkerGuard) -> Self {
-        Self {
-            _file_guard: Some(guard),
-        }
-    }
-}
+///
+/// The guard is stored globally and dropped when the process exits,
+/// which flushes any remaining log messages to disk.
+/// 
+/// We store `Option<WorkerGuard>` to handle both scenarios:
+/// - `Some(guard)` when file logging is enabled
+/// - `None` when only stderr logging is enabled
+static LOGGING_GUARD: OnceLock<Option<WorkerGuard>> = OnceLock::new();
 
 /// Initialize global tracing subscriber from environment variables.
 /// - RUST_LOG controls filtering (defaults to "info" if not set or invalid).
 /// - CODEX_LOG_FILE selects an explicit file (no rotation).
 /// - CODEX_LOG_DIR selects daily-rotated logs in the provided directory.
 /// - CODEX_LOG_STDERR disables stderr logging when set to "0" or "false".
-///
-/// Returns a LoggingGuard that must be kept alive for the duration of the process.
-pub fn init_from_env() -> Result<LoggingGuard> {
+pub fn init_from_env() -> Result<()> {
+    // Early return if already initialized (handles both with and without file logging).
+    if LOGGING_GUARD.get().is_some() {
+        return Ok(());
+    }
+
     // Build EnvFilter from RUST_LOG or default to "info".
     let filter = EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new("info"))?;
 
@@ -112,10 +109,11 @@ pub fn init_from_env() -> Result<LoggingGuard> {
     // Try init; ignore error if already initialized elsewhere.
     let _ = subscriber.try_init();
 
-    Ok(match file_guard {
-        Some(guard) => LoggingGuard::with_guard(guard),
-        None => LoggingGuard::none(),
-    })
+    // Store the guard globally (Some or None) to mark initialization complete.
+    // Note: set() can only be called once; subsequent calls will fail silently.
+    let _ = LOGGING_GUARD.set(file_guard);
+
+    Ok(())
 }
 
 /// Build a non-blocking writer for an explicit file path.

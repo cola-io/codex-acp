@@ -31,7 +31,6 @@ use tokio::{
 use tracing::info;
 
 use super::bridge;
-use crate::init_from_env;
 
 const DEFAULT_READ_LINE_LIMIT: u32 = 1000;
 const MAX_READ_BYTES: usize = 50 * 1024;
@@ -56,7 +55,7 @@ struct ReadSnippet {
 }
 
 pub async fn run() -> Result<()> {
-    let _logging = init_from_env()?;
+    crate::init_from_env()?;
     // Capture required env to talk to our local bridge and session.
     let bridge_addr = env::var("ACP_FS_BRIDGE_ADDR")
         .context("ACP_FS_BRIDGE_ADDR environment variable is required")?;
