@@ -36,7 +36,7 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 ///
 /// The guard is stored globally and dropped when the process exits,
 /// which flushes any remaining log messages to disk.
-/// 
+///
 /// We store `Option<WorkerGuard>` to handle both scenarios:
 /// - `Some(guard)` when file logging is enabled
 /// - `None` when only stderr logging is enabled
