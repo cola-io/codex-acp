@@ -1,9 +1,12 @@
 use agent_client_protocol::{
     CancelNotification, ContentBlock, EmbeddedResourceResource, Error, ExtNotification, ExtRequest,
     ExtResponse, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, PromptRequest,
-    PromptResponse, RequestPermissionResponse, SessionUpdate, StopReason,
+    PromptResponse, RequestPermissionResponse, SessionUpdate, StopReason, ToolCall, ToolCallId,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
-use codex_core::protocol::{ErrorEvent, EventMsg, Op, PatchApplyEndEvent, StreamErrorEvent};
+use codex_core::protocol::{
+    ErrorEvent, EventMsg, Op, PatchApplyEndEvent, StreamErrorEvent, WebSearchEndEvent,
+};
 use codex_protocol::{
     plan_tool::{StepStatus, UpdatePlanArgs},
     user_input::UserInput,
@@ -180,6 +183,44 @@ impl CodexAgent {
                         .send_session_update(&args.session_id, update)
                         .await?;
                 }
+                EventMsg::WebSearchBegin(event) => {
+                    info!("start to web search: call_id={}", event.call_id);
+                    self.session_manager
+                        .send_session_update(
+                            &args.session_id,
+                            SessionUpdate::ToolCall(ToolCall {
+                                id: ToolCallId(event.call_id.into()),
+                                title: "Searching the web".to_string(),
+                                kind: ToolKind::Fetch,
+                                status: ToolCallStatus::Pending,
+                                content: vec![],
+                                locations: vec![],
+                                raw_input: None,
+                                raw_output: None,
+                                meta: None,
+                            }),
+                        )
+                        .await?;
+                }
+                EventMsg::WebSearchEnd(WebSearchEndEvent { call_id, query }) => {
+                    self.session_manager
+                        .send_session_update(
+                            &args.session_id,
+                            SessionUpdate::ToolCallUpdate(ToolCallUpdate {
+                                id: ToolCallId(call_id.into()),
+                                fields: ToolCallUpdateFields {
+                                    status: Some(ToolCallStatus::Completed),
+                                    title: Some(format!("Searching for: {query}")),
+                                    raw_input: Some(serde_json::json!({
+                                        "query": query
+                                    })),
+                                    ..Default::default()
+                                },
+                                meta: None,
+                            }),
+                        )
+                        .await?;
+                }
                 // Exec command begin/end → ACP ToolCall/ToolCallUpdate
                 EventMsg::ExecCommandBegin(beg) => {
                     let update = event_handler.on_exec_command_begin(
@@ -328,8 +369,14 @@ impl CodexAgent {
                 EventMsg::TaskComplete(_) => {
                     break StopReason::EndTurn;
                 }
-                EventMsg::Error(ErrorEvent { message })
-                | EventMsg::StreamError(StreamErrorEvent { message }) => {
+                EventMsg::Error(ErrorEvent {
+                    message,
+                    codex_error_info: _,
+                })
+                | EventMsg::StreamError(StreamErrorEvent {
+                    message,
+                    codex_error_info: _,
+                }) => {
                     let mut msg = String::from(&message);
                     msg.push_str("\n\n");
                     self.session_manager

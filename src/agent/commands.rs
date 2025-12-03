@@ -2,7 +2,7 @@ use std::{path::Path, sync::LazyLock};
 
 use crate::CodexAgent;
 use agent_client_protocol::{AvailableCommand, SessionId};
-use codex_core::protocol::{AskForApproval, Op, ReviewRequest, SandboxPolicy};
+use codex_core::protocol::{AskForApproval, Op, ReviewRequest, ReviewTarget, SandboxPolicy};
 use codex_protocol::user_input::UserInput;
 
 pub static AVAILABLE_COMMANDS: LazyLock<Vec<AvailableCommand>> = LazyLock::new(built_in_commands);
@@ -42,9 +42,8 @@ impl CodexAgent {
                 msg = "🔍 Asking Codex to review current changes...\n\n".into();
                 Some(Op::Review {
                     review_request: ReviewRequest {
-                        prompt: "Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.".to_string(),
-                        user_facing_hint: "current changes".to_string(),
-                        append_to_original_thread: false,
+                        target: ReviewTarget::UncommittedChanges,
+                        user_facing_hint: Some("current changes".to_string()),
                     },
                 })
             }

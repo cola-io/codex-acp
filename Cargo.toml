@@ -1,7 +1,7 @@
 [package]
 name = "codex-acp"
 authors = ["angao<gawaine2111@gmail.com>"]
-version = "0.2.3"
+version = "0.3.0"
 edition = "2024"
 description = "ACP-compatible agent that bridges the OpenAI Codex runtime with ACP clients over stdio."
 readme = "README.md"
@@ -33,7 +33,7 @@ diffy = { version = "0.4.2" }
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
-rmcp = { version = "0.9.0", features = [
+rmcp = { version = "0.10.0", features = [
     "transport-io",
     "server",
     "macros",
