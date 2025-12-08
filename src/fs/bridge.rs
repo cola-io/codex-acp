@@ -168,7 +168,7 @@ impl FsBridgeInner {
             }
         };
 
-        let session_id = SessionId(session_id.into());
+        let session_id = SessionId::new(session_id);
 
         match op {
             BridgeOp::Read => {
@@ -248,13 +248,9 @@ impl FsBridgeInner {
         limit: Option<u32>,
     ) -> Result<String, String> {
         let (tx, rx) = oneshot::channel();
-        let request = ReadTextFileRequest {
-            session_id: session_id.clone(),
-            path: path.into(),
-            line,
-            limit,
-            meta: None,
-        };
+        let request = ReadTextFileRequest::new(session_id.clone(), path)
+            .line(line)
+            .limit(limit);
         self.client_tx
             .send(ClientOp::ReadTextFile {
                 request,
@@ -324,12 +320,7 @@ impl FsBridgeInner {
         content: String,
     ) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
-        let request = WriteTextFileRequest {
-            session_id: session_id.clone(),
-            path: path.into(),
-            content,
-            meta: None,
-        };
+        let request = WriteTextFileRequest::new(session_id.clone(), path, content);
         self.client_tx
             .send(ClientOp::WriteTextFile {
                 request,

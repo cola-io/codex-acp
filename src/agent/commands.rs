@@ -112,7 +112,7 @@ impl CodexAgent {
             };
 
         // Model
-        let model = &self.config.model;
+        let model = self.config.model.clone().unwrap_or_default();
         let provider = self.title_case(&self.config.model_provider_id);
         let effort = self.title_case(
             format!("{}", self.config.model_reasoning_effort.unwrap_or_default()).as_str(),
@@ -198,29 +198,18 @@ impl CodexAgent {
 
 fn built_in_commands() -> Vec<AvailableCommand> {
     vec![
-        AvailableCommand {
-            name: "init".into(),
-            description: "create an AGENTS.md file with instructions for Codex".into(),
-            input: None,
-            meta: None,
-        },
-        AvailableCommand {
-            name: "compact".into(),
-            description: "summarize conversation to prevent hitting the context limit".into(),
-            input: None,
-            meta: None,
-        },
-        AvailableCommand {
-            name: "review".into(),
-            description: "review my current changes and find issues".to_string(),
-            input: None,
-            meta: None,
-        },
-        AvailableCommand {
-            name: "status".into(),
-            description: "show current session configuration and token usage".into(),
-            input: None,
-            meta: None,
-        },
+        AvailableCommand::new(
+            "init",
+            "create an AGENTS.md file with instructions for Codex",
+        ),
+        AvailableCommand::new(
+            "compact",
+            "summarize conversation to prevent hitting the context limit",
+        ),
+        AvailableCommand::new("review", "review my current changes and find issues"),
+        AvailableCommand::new(
+            "status",
+            "show current session configuration and token usage",
+        ),
     ]
 }

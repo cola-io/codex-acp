@@ -21,7 +21,7 @@ impl CodexAgent {
         bridge: &FsBridge,
     ) -> Result<McpServerConfig, Error> {
         let exe_path = env::current_exe().map_err(|err| {
-            Error::internal_error().with_data(format!("failed to locate agent binary: {err}"))
+            Error::internal_error().data(format!("failed to locate agent binary: {err}"))
         })?;
 
         let mut env = HashMap::new();
@@ -97,36 +97,38 @@ impl CodexAgent {
         tool_timeout: Option<Duration>,
     ) -> Option<(String, McpServerConfig)> {
         match server {
-            McpServer::Http { name, url, headers } | McpServer::Sse { name, url, headers } => {
-                Some(Self::build_streamable_http_server(
-                    name,
-                    url.to_string(),
-                    headers,
-                    startup_timeout,
-                    tool_timeout,
-                ))
-            }
-            McpServer::Stdio {
-                name,
-                command,
-                args,
-                env,
-            } => {
-                let env = if env.is_empty() {
+            McpServer::Http(http) => Some(Self::build_streamable_http_server(
+                http.name,
+                http.url.to_string(),
+                http.headers,
+                startup_timeout,
+                tool_timeout,
+            )),
+            McpServer::Sse(sse) => Some(Self::build_streamable_http_server(
+                sse.name,
+                sse.url.to_string(),
+                sse.headers,
+                startup_timeout,
+                tool_timeout,
+            )),
+            McpServer::Stdio(stdio) => {
+                let env = if stdio.env.is_empty() {
                     None
                 } else {
                     Some(
-                        env.into_iter()
+                        stdio
+                            .env
+                            .into_iter()
                             .map(|var| (var.name, var.value))
                             .collect::<HashMap<_, _>>(),
                     )
                 };
                 Some((
-                    name,
+                    stdio.name,
                     McpServerConfig {
                         transport: McpServerTransportConfig::Stdio {
-                            command: command.to_string_lossy().into_owned(),
-                            args,
+                            command: stdio.command.to_string_lossy().into_owned(),
+                            args: stdio.args,
                             env,
                             env_vars: vec![],
                             cwd: None,
@@ -139,6 +141,8 @@ impl CodexAgent {
                     },
                 ))
             }
+            // Handle any future McpServer variants
+            _ => None,
         }
     }
 

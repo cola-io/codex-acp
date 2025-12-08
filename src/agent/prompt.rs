@@ -54,10 +54,7 @@ impl CodexAgent {
                         op_opt = Some(op);
                     }
                     None => {
-                        return Ok(PromptResponse {
-                            stop_reason: StopReason::EndTurn,
-                            meta: None,
-                        });
+                        return Ok(PromptResponse::new(StopReason::EndTurn));
                     }
                 }
             }
@@ -93,6 +90,8 @@ impl CodexAgent {
                         text: format!("Resource: {}", link.uri),
                     });
                 }
+                // Handle any future ContentBlock variants
+                _ => {}
             }
         }
 
@@ -188,17 +187,14 @@ impl CodexAgent {
                     self.session_manager
                         .send_session_update(
                             &args.session_id,
-                            SessionUpdate::ToolCall(ToolCall {
-                                id: ToolCallId(event.call_id.into()),
-                                title: "Searching the web".to_string(),
-                                kind: ToolKind::Fetch,
-                                status: ToolCallStatus::Pending,
-                                content: vec![],
-                                locations: vec![],
-                                raw_input: None,
-                                raw_output: None,
-                                meta: None,
-                            }),
+                            SessionUpdate::ToolCall(
+                                ToolCall::new(
+                                    ToolCallId::new(event.call_id.clone()),
+                                    "Searching the web",
+                                )
+                                .kind(ToolKind::Fetch)
+                                .status(ToolCallStatus::Pending),
+                            ),
                         )
                         .await?;
                 }
@@ -206,18 +202,15 @@ impl CodexAgent {
                     self.session_manager
                         .send_session_update(
                             &args.session_id,
-                            SessionUpdate::ToolCallUpdate(ToolCallUpdate {
-                                id: ToolCallId(call_id.into()),
-                                fields: ToolCallUpdateFields {
-                                    status: Some(ToolCallStatus::Completed),
-                                    title: Some(format!("Searching for: {query}")),
-                                    raw_input: Some(serde_json::json!({
+                            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                                ToolCallId::new(call_id),
+                                ToolCallUpdateFields::new()
+                                    .status(ToolCallStatus::Completed)
+                                    .title(format!("Searching for: {query}"))
+                                    .raw_input(serde_json::json!({
                                         "query": query
                                     })),
-                                    ..Default::default()
-                                },
-                                meta: None,
-                            }),
+                            )),
                         )
                         .await?;
                 }
@@ -347,22 +340,14 @@ impl CodexAgent {
                                 StepStatus::Completed => PlanEntryStatus::Completed,
                             };
 
-                            PlanEntry {
-                                content: item.step.clone(),
-                                priority: PlanEntryPriority::Medium,
-                                status,
-                                meta: None,
-                            }
+                            PlanEntry::new(item.step.clone(), PlanEntryPriority::Medium, status)
                         })
                         .collect();
 
                     self.session_manager
                         .send_session_update(
                             &args.session_id,
-                            SessionUpdate::Plan(Plan {
-                                entries,
-                                meta: None,
-                            }),
+                            SessionUpdate::Plan(Plan::new(entries)),
                         )
                         .await?;
                 }
@@ -399,10 +384,7 @@ impl CodexAgent {
                 .await?;
         }
 
-        Ok(PromptResponse {
-            stop_reason,
-            meta: None,
-        })
+        Ok(PromptResponse::new(stop_reason))
     }
 
     /// Cancel an ongoing prompt operation.
@@ -422,7 +404,8 @@ impl CodexAgent {
     /// This is a placeholder for future extensions.
     pub(super) async fn ext_method(&self, args: ExtRequest) -> Result<ExtResponse, Error> {
         info!(method = %args.method, params = ?args.params, "Received extension method call");
-        Ok(serde_json::value::to_raw_value(&json!({"example": "response"}))?.into())
+        let raw = serde_json::value::to_raw_value(&json!({"example": "response"}))?;
+        Ok(ExtResponse::new(std::sync::Arc::from(raw)))
     }
 
     /// Handle extension notifications.

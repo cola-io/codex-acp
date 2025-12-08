@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
                                     }
                                     None => {
                                         let err = Error::invalid_params()
-                                            .with_data("unknown session for read_text_file");
+                                            .data("unknown session for read_text_file");
                                         let _ = tx.send(Err(err));
                                     }
                                 }
@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
                                         req.session_id = resolved_id.clone();
                                         if session_manager.is_read_only(&resolved_id) {
                                             let err = Error::invalid_params()
-                                                .with_data("write_text_file is disabled while session mode is read-only");
+                                                .data("write_text_file is disabled while session mode is read-only");
                                             let _ = tx.send(Err(err));
                                         } else {
                                             let res = conn.write_text_file(req).await;
@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
                                     }
                                     None => {
                                         let err = Error::invalid_params()
-                                            .with_data("unknown session for write_text_file");
+                                            .data("unknown session for write_text_file");
                                         let _ = tx.send(Err(err));
                                     }
                                 }

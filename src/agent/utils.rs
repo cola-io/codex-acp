@@ -12,7 +12,7 @@ use codex_core::{
     config::{Config, profile::ConfigProfile},
     protocol::McpInvocation,
 };
-use codex_protocol::{config_types::ReasoningEffort, parse_command::ParsedCommand};
+use codex_protocol::{openai_models::ReasoningEffort, parse_command::ParsedCommand};
 
 /// All available approval presets used to derive ACP session modes.
 static APPROVAL_PRESETS: LazyLock<Vec<ApprovalPreset>> = LazyLock::new(builtin_approval_presets);
@@ -79,15 +79,11 @@ pub fn format_command_call(cwd: &Path, parsed_cmd: &[ParsedCommand]) -> FormatCo
         }
 
         if let Some(path) = cmd_path {
-            locations.push(ToolCallLocation {
-                path: if path.is_relative() {
-                    cwd.join(&path)
-                } else {
-                    path
-                },
-                line: None,
-                meta: None,
-            });
+            locations.push(ToolCallLocation::new(if path.is_relative() {
+                cwd.join(&path)
+            } else {
+                path
+            }));
         }
     }
 
@@ -152,11 +148,7 @@ pub fn describe_mcp_tool(
     cwd: &Path,
 ) -> (String, Vec<ToolCallLocation>) {
     if let Some(metadata) = fs_tool_metadata(invocation, cwd) {
-        let location = ToolCallLocation {
-            path: metadata.location_path,
-            line: metadata.line,
-            meta: None,
-        };
+        let location = ToolCallLocation::new(metadata.location_path).line(metadata.line);
         (
             format!(
                 "{}.{} ({})",
@@ -175,11 +167,7 @@ pub fn describe_mcp_tool(
 /// Build the ACP `SessionModeState` (current + available) from a Codex `Config`.
 pub fn session_modes_for_config(config: &Config) -> Option<SessionModeState> {
     let current_mode_id = current_mode_id_for_config(config)?;
-    Some(SessionModeState {
-        current_mode_id,
-        available_modes: available_modes(),
-        meta: None,
-    })
+    Some(SessionModeState::new(current_mode_id, available_modes()))
 }
 
 /// Return the current ACP session mode id by matching the preset for the provided config.
@@ -189,7 +177,7 @@ pub fn current_mode_id_for_config(config: &Config) -> Option<SessionModeId> {
         .find(|preset| {
             preset.approval == config.approval_policy && preset.sandbox == config.sandbox_policy
         })
-        .map(|preset| SessionModeId(preset.id.into()))
+        .map(|preset| SessionModeId::new(preset.id))
 }
 
 /// Find an approval preset by ACP session mode id.
@@ -207,15 +195,13 @@ pub fn is_read_only_mode(mode_id: &SessionModeId) -> bool {
 pub fn available_modes() -> Vec<SessionMode> {
     APPROVAL_PRESETS
         .iter()
-        .map(|preset| SessionMode {
-            id: SessionModeId(preset.id.into()),
-            name: preset.label.to_string(),
-            description: if preset.description.is_empty() {
-                None
+        .map(|preset| {
+            let mode = SessionMode::new(SessionModeId::new(preset.id), preset.label.to_string());
+            if preset.description.is_empty() {
+                mode
             } else {
-                Some(preset.description.to_string())
-            },
-            meta: None,
+                mode.description(preset.description.to_string())
+            }
         })
         .collect()
 }
@@ -227,7 +213,8 @@ pub fn is_custom_provider(provider_id: &str) -> bool {
 
 /// Return the current model ID from config.
 pub fn current_model_id_from_config(config: &Config) -> ModelId {
-    ModelId(format!("{}@{}", config.model_provider_id, config.model).into())
+    let model_name = config.model.as_deref().unwrap_or_default();
+    ModelId::new(format!("{}@{}", config.model_provider_id, model_name))
 }
 
 /// Build a `ModelInfo` for display to the client.
@@ -235,15 +222,16 @@ fn build_model_info(config: &Config, provider_id: &str, model_name: &str) -> Opt
     let provider_info = config.model_providers.get(provider_id)?;
     let model_id = format!("{}@{}", provider_id, model_name);
 
-    Some(ModelInfo {
-        model_id: ModelId(model_id.into()),
-        name: format!("{}@{}", provider_info.name, model_name),
-        description: Some(format!(
+    Some(
+        ModelInfo::new(
+            ModelId::new(model_id),
+            format!("{}@{}", provider_info.name, model_name),
+        )
+        .description(format!(
             "Provider: {}, Model: {}",
             provider_info.name, model_name
         )),
-        meta: None,
-    })
+    )
 }
 
 /// Return the list of ACP `ModelInfo` entries derived from profiles (custom-only).
@@ -256,9 +244,10 @@ pub fn available_models_from_profiles(
 
     // Add the current model from config first (only if it's a custom provider)
     if is_custom_provider(&config.model_provider_id)
-        && let Some(model_info) = build_model_info(config, &config.model_provider_id, &config.model)
+        && let Some(model_name) = config.model.as_deref()
+        && let Some(model_info) = build_model_info(config, &config.model_provider_id, model_name)
     {
-        seen.insert(format!("{}@{}", &config.model_provider_id, &config.model));
+        seen.insert(format!("{}@{}", &config.model_provider_id, model_name));
         models.push(model_info);
     }
 
@@ -317,7 +306,9 @@ pub fn parse_and_validate_model(
     }
 
     // Check if this is the current config model
-    if provider_id == config.model_provider_id && model_name == config.model {
+    if provider_id == config.model_provider_id
+        && config.model.as_deref() == Some(model_name.as_str())
+    {
         return Some((provider_id, model_name, config.model_reasoning_effort));
     }
 

@@ -8,9 +8,8 @@ use codex_core::{
     CodexConversation, ConversationManager,
     config::Config,
     protocol::{AskForApproval, Op, SandboxPolicy, TokenUsage},
-    protocol_config_types::ReasoningEffort,
 };
-use codex_protocol::ConversationId;
+use codex_protocol::{ConversationId, openai_models::ReasoningEffort};
 use tokio::sync::{
     mpsc::UnboundedSender,
     oneshot::{self, Sender},
@@ -46,7 +45,7 @@ impl SessionState {
         current_mode: SessionModeId,
     ) -> Self {
         let provider_id = &config.model_provider_id;
-        let model_name = &config.model;
+        let model_name = config.model.as_deref().unwrap_or("unknown");
         Self {
             fs_session_id,
             conversation,
@@ -142,7 +141,7 @@ impl SessionManager {
 
         sessions.iter().find_map(|(key, state)| {
             if state.fs_session_id == session_id.0.as_ref() {
-                Some(SessionId(key.clone().into()))
+                Some(SessionId::new(key.clone()))
             } else {
                 None
             }
@@ -166,7 +165,7 @@ impl SessionManager {
             let sessions = self.sessions.borrow();
             let state = sessions
                 .get(session_id.0.as_ref())
-                .ok_or_else(|| Error::invalid_params().with_data("session not found"))?;
+                .ok_or_else(|| Error::invalid_params().data("session not found"))?;
             state.conversation.clone()
         };
 
@@ -211,11 +210,7 @@ impl SessionManager {
         update: SessionUpdate,
     ) -> Result<(), Error> {
         let (tx, rx) = oneshot::channel();
-        let notification = SessionNotification {
-            session_id: session_id.clone(),
-            update,
-            meta: None,
-        };
+        let notification = SessionNotification::new(session_id.clone(), update);
         self.session_update_tx
             .send((notification, tx))
             .map_err(Error::into_internal_error)?;
@@ -228,10 +223,7 @@ impl SessionManager {
         session_id: &SessionId,
         content: ContentBlock,
     ) -> Result<(), Error> {
-        let chunk = SessionUpdate::AgentMessageChunk(ContentChunk {
-            content,
-            meta: None,
-        });
+        let chunk = SessionUpdate::AgentMessageChunk(ContentChunk::new(content));
         self.send_session_update(session_id, chunk).await
     }
 
@@ -241,10 +233,7 @@ impl SessionManager {
         session_id: &SessionId,
         content: ContentBlock,
     ) -> Result<(), Error> {
-        let chunk = SessionUpdate::AgentThoughtChunk(ContentChunk {
-            content,
-            meta: None,
-        });
+        let chunk = SessionUpdate::AgentThoughtChunk(ContentChunk::new(content));
         self.send_session_update(session_id, chunk).await
     }
 
@@ -270,7 +259,7 @@ impl SessionManager {
             let sessions = self.sessions.borrow();
             let state = sessions
                 .get(session_id.0.as_ref())
-                .ok_or_else(|| Error::invalid_params().with_data("session not found"))?;
+                .ok_or_else(|| Error::invalid_params().data("session not found"))?;
             build_override(state)
         };
         self.get_conversation(session_id)

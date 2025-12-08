@@ -8,10 +8,10 @@ use agent_client_protocol::{
     AgentCapabilities, AuthMethod, AuthMethodId, AuthenticateRequest, AuthenticateResponse,
     AvailableCommandsUpdate, Error, Implementation, InitializeRequest, InitializeResponse,
     LoadSessionRequest, LoadSessionResponse, McpCapabilities, ModelId, NewSessionRequest,
-    NewSessionResponse, PromptCapabilities, ReadTextFileRequest, ReadTextFileResponse,
-    RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionModeId,
-    SessionModeState, SessionModelState, SessionNotification, SessionUpdate, SetSessionModeRequest,
-    SetSessionModeResponse, SetSessionModelRequest, SetSessionModelResponse, V1,
+    NewSessionResponse, PromptCapabilities, ProtocolVersion, ReadTextFileRequest,
+    ReadTextFileResponse, RequestPermissionRequest, RequestPermissionResponse, SessionId,
+    SessionModeId, SessionModeState, SessionModelState, SessionNotification, SessionUpdate,
+    SetSessionModeRequest, SetSessionModeResponse, SetSessionModelRequest, SetSessionModelResponse,
     WriteTextFileRequest, WriteTextFileResponse,
 };
 use codex_app_server_protocol::AuthMode;
@@ -109,63 +109,45 @@ impl CodexAgent {
 
         // Advertise supported auth methods based on the configured provider
         let mut auth_methods = vec![
-            AuthMethod {
-                id: AuthMethodId("chatgpt".into()),
-                name: "ChatGPT".into(),
-                description: Some("Sign in with ChatGPT to use your plan".into()),
-                meta: None,
-            },
-            AuthMethod {
-                id: AuthMethodId("apikey".into()),
-                name: "OpenAI API Key".into(),
-                description: Some("Use OPENAI_API_KEY from environment or auth.json".into()),
-                meta: None,
-            },
+            AuthMethod::new(AuthMethodId::new("chatgpt"), "ChatGPT")
+                .description("Sign in with ChatGPT to use your plan"),
+            AuthMethod::new(AuthMethodId::new("apikey"), "OpenAI API Key")
+                .description("Use OPENAI_API_KEY from environment or auth.json"),
         ];
 
         // Add custom provider auth method if using a custom provider
         if utils::is_custom_provider(&self.config.model_provider_id) {
-            auth_methods.push(AuthMethod {
-                id: AuthMethodId(self.config.model_provider_id.clone().into()),
-                name: self.config.model_provider.name.clone(),
-                description: Some(format!(
+            auth_methods.push(
+                AuthMethod::new(
+                    AuthMethodId::new(self.config.model_provider_id.clone()),
+                    self.config.model_provider.name.clone(),
+                )
+                .description(format!(
                     "Authenticate with custom provider: {}",
                     self.config.model_provider_id
                 )),
-                meta: None,
-            });
+            );
         }
 
         self.session_manager
             .set_client_capabilities(args.client_capabilities);
 
-        let agent_capabilities = AgentCapabilities {
-            load_session: false,
-            prompt_capabilities: PromptCapabilities {
-                image: true,
-                audio: false,
-                embedded_context: true,
-                meta: None,
-            },
-            mcp_capabilities: McpCapabilities {
-                http: true,
-                sse: true,
-                meta: None,
-            },
-            meta: None,
-        };
+        let agent_capabilities = AgentCapabilities::new()
+            .load_session(false)
+            .prompt_capabilities(
+                PromptCapabilities::new()
+                    .image(true)
+                    .audio(false)
+                    .embedded_context(true),
+            )
+            .mcp_capabilities(McpCapabilities::new().http(true).sse(true));
 
-        Ok(InitializeResponse {
-            protocol_version: V1,
-            agent_capabilities,
-            auth_methods,
-            agent_info: Some(Implementation {
-                name: "codex-acp".into(),
-                title: Some("Codex ACP".into()),
-                version: env!("CARGO_PKG_VERSION").into(),
-            }),
-            meta: None,
-        })
+        Ok(InitializeResponse::new(ProtocolVersion::V1)
+            .agent_capabilities(agent_capabilities)
+            .auth_methods(auth_methods)
+            .agent_info(
+                Implementation::new("codex-acp", env!("CARGO_PKG_VERSION")).title("Codex ACP"),
+            ))
     }
 
     /// Authenticate the client using the specified authentication method.
@@ -186,7 +168,7 @@ impl CodexAgent {
                         return Ok(Default::default());
                     }
                 }
-                Err(Error::auth_required().with_data("Failed to load API key auth"))
+                Err(Error::auth_required().data("Failed to load API key auth"))
             }
             "chatgpt" => {
                 if let Ok(am) = self.auth_manager.write() {
@@ -198,12 +180,12 @@ impl CodexAgent {
                     }
                 }
                 Err(Error::auth_required()
-                    .with_data("ChatGPT login not found. Run `codex login` to connect your plan."))
+                    .data("ChatGPT login not found. Run `codex login` to connect your plan."))
             }
             "custom_provider" => {
                 // For custom providers, check if the provider is configured
                 if !utils::is_custom_provider(&self.config.model_provider_id) {
-                    return Err(Error::invalid_params().with_data(
+                    return Err(Error::invalid_params().data(
                         "Custom provider auth method is only available for custom providers",
                     ));
                 }
@@ -214,7 +196,7 @@ impl CodexAgent {
                     .model_providers
                     .contains_key(&self.config.model_provider_id)
                 {
-                    return Err(Error::auth_required().with_data(format!(
+                    return Err(Error::auth_required().data(format!(
                         "Custom provider '{}' is not configured in model_providers",
                         self.config.model_provider_id
                     )));
@@ -230,14 +212,12 @@ impl CodexAgent {
                     }
                 }
 
-                Err(Error::auth_required().with_data(format!(
+                Err(Error::auth_required().data(format!(
                     "Custom provider '{}' requires authentication. Please configure API credentials in your Codex config.",
                     self.config.model_provider_id
                 )))
             }
-            other => {
-                Err(Error::invalid_params().with_data(format!("unknown auth method: {}", other)))
-            }
+            other => Err(Error::invalid_params().data(format!("unknown auth method: {}", other))),
         }
     }
 
@@ -256,7 +236,7 @@ impl CodexAgent {
         let current_mode = modes
             .as_ref()
             .map(|m| m.current_mode_id.clone())
-            .unwrap_or(SessionModeId("auto".into()));
+            .unwrap_or_else(|| SessionModeId::new("auto"));
 
         let session_config = self.build_session_config(&fs_session_id, args.mcp_servers)?;
 
@@ -302,11 +282,10 @@ impl CodexAgent {
             task::spawn_local(async move {
                 let _ = session_manager
                     .send_session_update(
-                        &SessionId(session_id.into()),
-                        SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate {
+                        &SessionId::new(session_id),
+                        SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(
                             available_commands,
-                            meta: None,
-                        }),
+                        )),
                     )
                     .await;
             });
@@ -314,24 +293,19 @@ impl CodexAgent {
 
         // Build models response only for custom providers
         let models = if utils::is_custom_provider(&self.config.model_provider_id) {
-            Some(SessionModelState {
-                current_model_id: utils::current_model_id_from_config(&self.config),
-                available_models: utils::available_models_from_profiles(
-                    &self.config,
-                    &self.profiles,
-                ),
-                meta: None,
-            })
+            Some(SessionModelState::new(
+                utils::current_model_id_from_config(&self.config),
+                utils::available_models_from_profiles(&self.config, &self.profiles),
+            ))
         } else {
             None
         };
 
-        Ok(NewSessionResponse {
-            session_id: SessionId(acp_session_id.clone().into()),
-            modes,
-            models,
-            meta: None,
-        })
+        Ok(
+            NewSessionResponse::new(SessionId::new(acp_session_id.clone()))
+                .modes(modes)
+                .models(models),
+        )
     }
 
     /// Load an existing session and return its current state.
@@ -345,14 +319,14 @@ impl CodexAgent {
             let sessions = sessions.borrow();
             let state = sessions
                 .get(args.session_id.0.as_ref())
-                .ok_or_else(|| Error::invalid_params().with_data("session not found"))?;
+                .ok_or_else(|| Error::invalid_params().data("session not found"))?;
             (state.current_mode.clone(), state.current_model.clone())
         };
 
         // Use stored model or derive from config
         let current_model_id = if let Some(ref stored_model) = _current_model {
             // If model was set via set_session_model, it's already in "model@provider" format
-            ModelId(stored_model.clone().into())
+            ModelId::new(stored_model.clone())
         } else {
             // Otherwise, construct from current config
             utils::current_model_id_from_config(&self.config)
@@ -360,32 +334,21 @@ impl CodexAgent {
 
         // Build models response only for custom providers
         let models = if utils::is_custom_provider(&self.config.model_provider_id) {
-            Some(SessionModelState {
+            Some(SessionModelState::new(
                 current_model_id,
-                available_models: utils::available_models_from_profiles(
-                    &self.config,
-                    &self.profiles,
-                ),
-                meta: None,
-            })
+                utils::available_models_from_profiles(&self.config, &self.profiles),
+            ))
         } else {
             None
         };
 
-        Ok(LoadSessionResponse {
-            modes: Some(SessionModeState {
-                current_mode_id: current_mode,
-                available_modes: utils::available_modes(),
-                meta: None,
-            }),
-            models,
-            meta: None,
-        })
+        Ok(LoadSessionResponse::new()
+            .modes(SessionModeState::new(
+                current_mode,
+                utils::available_modes(),
+            ))
+            .models(models))
     }
-
-    // ============================================================================
-    // Session Configuration
-    // ============================================================================
 
     /// Change the approval and sandbox mode for a session.
     ///
@@ -397,7 +360,7 @@ impl CodexAgent {
     ) -> Result<SetSessionModeResponse, Error> {
         info!(?args, "Received set session mode request");
         let preset = utils::find_preset_by_mode_id(&args.mode_id)
-            .ok_or_else(|| Error::invalid_params().with_data("invalid mode id"))?;
+            .ok_or_else(|| Error::invalid_params().data("invalid mode id"))?;
 
         self.session_manager
             .apply_context_override(
@@ -435,7 +398,7 @@ impl CodexAgent {
 
         // Check if current provider is custom
         if !utils::is_custom_provider(&self.config.model_provider_id) {
-            return Err(Error::invalid_params().with_data(
+            return Err(Error::invalid_params().data(
                 "set_session_model is only available when using a custom provider. Current provider is a builtin provider.",
             ));
         }
@@ -445,12 +408,12 @@ impl CodexAgent {
             utils::parse_and_validate_model(&self.config, &self.profiles, &args.model_id)
                 .ok_or_else(|| {
                     Error::invalid_params()
-                        .with_data("invalid model id format or provider/model not found")
+                        .data("invalid model id format or provider/model not found")
                 })?;
 
         // Ensure the requested model is also from a custom provider
         if !utils::is_custom_provider(&provider_id) {
-            return Err(Error::invalid_params().with_data(
+            return Err(Error::invalid_params().data(
                 "Cannot switch to a builtin provider model. Only custom provider models are allowed.",
             ));
         }

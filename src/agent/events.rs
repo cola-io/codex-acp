@@ -4,10 +4,10 @@ use std::{
 };
 
 use agent_client_protocol::{
-    Diff, PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionUpdate, TerminalId,
-    ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind,
+    Diff, PermissionOption, PermissionOptionKind, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionUpdate, Terminal,
+    TerminalId, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
 };
 use codex_core::protocol::{FileChange, McpInvocation, ReviewDecision};
 use codex_protocol::parse_command::ParsedCommand;
@@ -47,7 +47,6 @@ impl EventHandler {
             permission_options: default_permission_options(),
         }
     }
-    // ---- MCP tool calls ----
 
     /// Build a ToolCall update for "MCP Tool Call Begin".
     pub fn on_mcp_tool_call_begin(
@@ -56,17 +55,11 @@ impl EventHandler {
         invocation: &McpInvocation,
     ) -> SessionUpdate {
         let (title, locations) = utils::describe_mcp_tool(invocation, &self.cwd);
-        let tool = ToolCall {
-            id: ToolCallId(call_id.into()),
-            title,
-            kind: ToolKind::Fetch,
-            status: ToolCallStatus::InProgress,
-            content: Vec::new(),
-            locations,
-            raw_input: invocation.arguments.clone(),
-            raw_output: None,
-            meta: None,
-        };
+        let tool = ToolCall::new(ToolCallId::new(call_id), title)
+            .kind(ToolKind::Fetch)
+            .status(ToolCallStatus::InProgress)
+            .locations(locations)
+            .raw_input(invocation.arguments.clone());
         SessionUpdate::ToolCall(tool)
     }
 
@@ -83,27 +76,19 @@ impl EventHandler {
         } else {
             ToolCallStatus::Failed
         };
-        let raw_output = Some(result.clone());
         let (title, locations) = utils::describe_mcp_tool(invocation, &self.cwd);
-        let update = ToolCallUpdate {
-            id: ToolCallId(call_id.into()),
-            fields: ToolCallUpdateFields {
-                status: Some(status),
-                title: Some(title),
-                locations: if locations.is_empty() {
-                    None
-                } else {
-                    Some(locations)
-                },
-                raw_output,
-                ..Default::default()
-            },
-            meta: None,
-        };
+        let fields = ToolCallUpdateFields::new()
+            .status(status)
+            .title(title)
+            .locations(if locations.is_empty() {
+                None
+            } else {
+                Some(locations)
+            })
+            .raw_output(result.clone());
+        let update = ToolCallUpdate::new(ToolCallId::new(call_id), fields);
         SessionUpdate::ToolCallUpdate(update)
     }
-
-    // ---- Exec command calls ----
 
     /// Build a ToolCall for "Exec Command Begin".
     pub fn on_exec_command_begin(
@@ -121,35 +106,35 @@ impl EventHandler {
         } = utils::format_command_call(cwd, parsed_cmd);
 
         let (content, meta) = if self.support_terminal && terminal_output {
-            let content = vec![ToolCallContent::Terminal {
-                terminal_id: TerminalId(call_id.into()),
-            }];
-            let meta = Some(json!({
-                "terminal_info": {
+            let content = vec![ToolCallContent::Terminal(Terminal::new(TerminalId::new(
+                call_id,
+            )))];
+            let mut meta_map = serde_json::Map::new();
+            meta_map.insert(
+                "terminal_info".to_string(),
+                json!({
                     "terminal_id": call_id,
                     "cwd": cwd
-                }
-            }));
-            (content, meta)
+                }),
+            );
+            (content, Some(meta_map))
         } else {
             (vec![], None)
         };
 
-        let tool = ToolCall {
-            id: ToolCallId(call_id.into()),
-            title,
-            kind,
-            status: ToolCallStatus::InProgress,
-            content,
-            locations,
-            raw_input: Some(json!({
+        let mut tool = ToolCall::new(ToolCallId::new(call_id), title)
+            .kind(kind)
+            .status(ToolCallStatus::InProgress)
+            .content(content)
+            .locations(locations)
+            .raw_input(json!({
                 "command": command,
                 "command_string": command.join(" "),
                 "cwd": cwd
-            })),
-            raw_output: None,
-            meta,
-        };
+            }));
+        if let Some(m) = meta {
+            tool = tool.meta(m);
+        }
         SessionUpdate::ToolCall(tool)
     }
 
@@ -176,24 +161,19 @@ impl EventHandler {
             }
         }
 
-        let update = ToolCallUpdate {
-            id: ToolCallId(end.call_id.into()),
-            fields: ToolCallUpdateFields {
-                status: Some(status),
-                content: if content.is_empty() {
-                    None
-                } else {
-                    Some(content)
-                },
-                raw_output: Some(json!({
-                    "exit_code": end.exit_code,
-                    "duration_ms": end.duration_ms,
-                    "formatted_output": end.formatted_output,
-                })),
-                ..Default::default()
-            },
-            meta: None,
-        };
+        let fields = ToolCallUpdateFields::new()
+            .status(status)
+            .content(if content.is_empty() {
+                None
+            } else {
+                Some(content)
+            })
+            .raw_output(json!({
+                "exit_code": end.exit_code,
+                "duration_ms": end.duration_ms,
+                "formatted_output": end.formatted_output,
+            }));
+        let update = ToolCallUpdate::new(ToolCallId::new(end.call_id), fields);
 
         SessionUpdate::ToolCallUpdate(update)
     }
@@ -213,28 +193,22 @@ impl EventHandler {
             kind,
         } = utils::format_command_call(cwd, parsed_cmd);
 
-        let update = ToolCallUpdate {
-            id: ToolCallId(call_id.into()),
-            fields: ToolCallUpdateFields {
-                kind: Some(kind),
-                status: Some(ToolCallStatus::Pending),
-                title: Some(title),
-                locations: if locations.is_empty() {
-                    None
-                } else {
-                    Some(locations)
-                },
-                ..Default::default()
-            },
-            meta: None,
-        };
+        let fields = ToolCallUpdateFields::new()
+            .kind(kind)
+            .status(ToolCallStatus::Pending)
+            .title(title)
+            .locations(if locations.is_empty() {
+                None
+            } else {
+                Some(locations)
+            });
+        let update = ToolCallUpdate::new(ToolCallId::new(call_id), fields);
 
-        RequestPermissionRequest {
-            session_id: session_id.clone(),
-            tool_call: update,
-            options: self.permission_options.as_ref().clone(),
-            meta: None,
-        }
+        RequestPermissionRequest::new(
+            session_id.clone(),
+            update,
+            self.permission_options.as_ref().clone(),
+        )
     }
 
     // ---- Patch approval ----
@@ -250,28 +224,20 @@ impl EventHandler {
         for (path, change) in changes.iter() {
             match change {
                 FileChange::Add { content } => {
-                    contents.push(ToolCallContent::from(Diff {
-                        path: PathBuf::from(path),
-                        old_text: None,
-                        new_text: content.clone(),
-                        meta: None,
-                    }));
+                    contents.push(ToolCallContent::from(
+                        Diff::new(PathBuf::from(path), content.clone()).old_text(None),
+                    ));
                 }
                 FileChange::Delete { content } => {
-                    contents.push(ToolCallContent::from(Diff {
-                        path: PathBuf::from(path),
-                        old_text: Some(content.clone()),
-                        new_text: "".into(),
-                        meta: None,
-                    }));
+                    contents.push(ToolCallContent::from(
+                        Diff::new(PathBuf::from(path), "".to_string()).old_text(content.clone()),
+                    ));
                 }
                 FileChange::Update { unified_diff, .. } => {
-                    contents.push(ToolCallContent::from(Diff {
-                        path: PathBuf::from(path),
-                        old_text: Some(unified_diff.into()),
-                        new_text: unified_diff.clone(),
-                        meta: None,
-                    }));
+                    contents.push(ToolCallContent::from(
+                        Diff::new(PathBuf::from(path), unified_diff.clone())
+                            .old_text(unified_diff.clone()),
+                    ));
                 }
             }
         }
@@ -282,28 +248,22 @@ impl EventHandler {
             format!("Edit {} files", changes.len())
         };
 
-        let update = ToolCallUpdate {
-            id: ToolCallId(call_id.into()),
-            fields: ToolCallUpdateFields {
-                kind: Some(ToolKind::Edit),
-                status: Some(ToolCallStatus::Pending),
-                title: Some(title),
-                content: if contents.is_empty() {
-                    None
-                } else {
-                    Some(contents)
-                },
-                ..Default::default()
-            },
-            meta: None,
-        };
+        let fields = ToolCallUpdateFields::new()
+            .kind(ToolKind::Edit)
+            .status(ToolCallStatus::Pending)
+            .title(title)
+            .content(if contents.is_empty() {
+                None
+            } else {
+                Some(contents)
+            });
+        let update = ToolCallUpdate::new(ToolCallId::new(call_id), fields);
 
-        RequestPermissionRequest {
-            session_id: session_id.clone(),
-            tool_call: update,
-            options: self.permission_options.as_ref().clone(),
-            meta: None,
-        }
+        RequestPermissionRequest::new(
+            session_id.clone(),
+            update,
+            self.permission_options.as_ref().clone(),
+        )
     }
 
     /// Build a ToolCallUpdate for "Patch Apply End".
@@ -313,19 +273,14 @@ impl EventHandler {
         success: bool,
         raw_event_json: serde_json::Value,
     ) -> SessionUpdate {
-        let update = ToolCallUpdate {
-            id: ToolCallId(call_id.into()),
-            fields: ToolCallUpdateFields {
-                status: Some(if success {
-                    ToolCallStatus::Completed
-                } else {
-                    ToolCallStatus::Failed
-                }),
-                raw_output: Some(raw_event_json),
-                ..Default::default()
-            },
-            meta: None,
-        };
+        let fields = ToolCallUpdateFields::new()
+            .status(if success {
+                ToolCallStatus::Completed
+            } else {
+                ToolCallStatus::Failed
+            })
+            .raw_output(raw_event_json);
+        let update = ToolCallUpdate::new(ToolCallId::new(call_id), fields);
 
         SessionUpdate::ToolCallUpdate(update)
     }
@@ -334,36 +289,27 @@ impl EventHandler {
 /// Map an approval response to the `ReviewDecision` used by Codex operations.
 pub fn handle_response_outcome(resp: RequestPermissionResponse) -> ReviewDecision {
     match resp.outcome {
-        RequestPermissionOutcome::Selected { option_id } => match option_id.0.as_ref() {
+        RequestPermissionOutcome::Selected(selected) => match selected.option_id.0.as_ref() {
             "approved" => ReviewDecision::Approved,
             "approved-for-session" => ReviewDecision::ApprovedForSession,
             _ => ReviewDecision::Abort,
         },
         RequestPermissionOutcome::Cancelled => ReviewDecision::Abort,
+        // Handle any future RequestPermissionOutcome variants
+        _ => ReviewDecision::Abort,
     }
 }
 
 /// Build the default permission options set for approval requests.
 pub fn default_permission_options() -> Arc<Vec<PermissionOption>> {
     Arc::new(vec![
-        PermissionOption {
-            id: PermissionOptionId("approved-for-session".into()),
-            name: "Approved Always".into(),
-            kind: PermissionOptionKind::AllowAlways,
-            meta: None,
-        },
-        PermissionOption {
-            id: PermissionOptionId("approved".into()),
-            name: "Approved".into(),
-            kind: PermissionOptionKind::AllowOnce,
-            meta: None,
-        },
-        PermissionOption {
-            id: PermissionOptionId("abort".into()),
-            name: "Reject".into(),
-            kind: PermissionOptionKind::RejectOnce,
-            meta: None,
-        },
+        PermissionOption::new(
+            "approved-for-session",
+            "Approved Always",
+            PermissionOptionKind::AllowAlways,
+        ),
+        PermissionOption::new("approved", "Approved", PermissionOptionKind::AllowOnce),
+        PermissionOption::new("abort", "Reject", PermissionOptionKind::RejectOnce),
     ])
 }
 
