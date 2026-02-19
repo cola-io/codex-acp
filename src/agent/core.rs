@@ -14,9 +14,9 @@ use agent_client_protocol::{
     SetSessionModeRequest, SetSessionModeResponse, SetSessionModelRequest, SetSessionModelResponse,
     WriteTextFileRequest, WriteTextFileResponse,
 };
-use codex_app_server_protocol::AuthMode;
+use codex_core::auth::AuthMode;
 use codex_core::{
-    AuthManager, ConversationManager, NewConversation,
+    AuthManager, ThreadManager, NewThread,
     config::{Config, profile::ConfigProfile},
     protocol::{Op, SessionSource},
 };
@@ -85,10 +85,10 @@ impl CodexAgent {
             false,
             config.cli_auth_credentials_store_mode,
         );
-        let conversation_manager = ConversationManager::new(auth.clone(), SessionSource::Unknown);
+        let thread_manager = ThreadManager::new(config.codex_home.clone(), auth.clone(), SessionSource::Unknown);
 
         let session_manager =
-            SessionManager::new(session_update_tx, Arc::new(conversation_manager));
+            SessionManager::new(session_update_tx, Arc::new(thread_manager));
 
         Self {
             session_manager,
@@ -164,7 +164,7 @@ impl CodexAgent {
                     // Persisting the API key is handled by Codex core when reloading;
                     // here we simply reload and check.
                     am.reload();
-                    if am.auth().is_some() {
+                    if am.auth_cached().is_some() {
                         return Ok(Default::default());
                     }
                 }
@@ -173,8 +173,8 @@ impl CodexAgent {
             "chatgpt" => {
                 if let Ok(am) = self.auth_manager.write() {
                     am.reload();
-                    if let Some(auth) = am.auth()
-                        && auth.mode == AuthMode::ChatGPT
+                    if let Some(auth) = am.auth_cached()
+                        && auth.auth_mode() == AuthMode::Chatgpt
                     {
                         return Ok(Default::default());
                     }
@@ -207,7 +207,7 @@ impl CodexAgent {
                 // has valid auth, accept it; otherwise require configuration.
                 if let Ok(am) = self.auth_manager.write() {
                     am.reload();
-                    if am.auth().is_some() {
+                    if am.auth_cached().is_some() {
                         return Ok(Default::default());
                     }
                 }
@@ -242,16 +242,16 @@ impl CodexAgent {
 
         let new_conv = self
             .session_manager
-            .conversation_manager()
-            .new_conversation(session_config)
+            .thread_manager()
+            .start_thread(session_config)
             .await;
 
-        let (conversation, conversation_id) = match new_conv {
-            Ok(NewConversation {
-                conversation,
-                conversation_id,
+        let (conversation, thread_id) = match new_conv {
+            Ok(NewThread {
+                thread,
+                thread_id,
                 ..
-            }) => (conversation, conversation_id),
+            }) => (thread, thread_id),
             Err(e) => {
                 warn!(error = %e, "Failed to create Codex conversation");
                 return Err(Error::into_internal_error(e));
@@ -259,7 +259,7 @@ impl CodexAgent {
         };
 
         // Use the Codex conversation id as ACP session id.
-        let acp_session_id = conversation_id.to_string();
+        let acp_session_id = thread_id.to_string();
 
         // Initialize session state from config
         self.session_manager.sessions().borrow_mut().insert(
@@ -372,6 +372,9 @@ impl CodexAgent {
                     effort: Some(state.current_effort),
                     cwd: None,
                     summary: None,
+                    collaboration_mode: None,
+                    personality: None,
+                    windows_sandbox_level: None,
                 },
                 |state| {
                     state.current_approval = preset.approval;
@@ -428,6 +431,9 @@ impl CodexAgent {
                     model: Some(format!("{}@{}", provider_id, model_name)),
                     effort: Some(effort),
                     summary: None,
+                    collaboration_mode: None,
+                    personality: None,
+                    windows_sandbox_level: None,
                 },
                 |state| {
                     state.current_model = Some(format!("{}@{}", provider_id, model_name));

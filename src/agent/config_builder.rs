@@ -53,6 +53,9 @@ impl CodexAgent {
                 }
                 if v.is_empty() { None } else { Some(v) }
             },
+            disabled_reason: None,
+            required: false,
+            scopes: None,
         })
     }
 
@@ -82,6 +85,9 @@ impl CodexAgent {
                 tool_timeout_sec: tool_timeout,
                 enabled_tools: None,
                 disabled_tools: None,
+                disabled_reason: None,
+                required: false,
+                scopes: None,
             },
         )
     }
@@ -135,6 +141,9 @@ impl CodexAgent {
                         tool_timeout_sec: tool_timeout,
                         enabled_tools: None,
                         disabled_tools: None,
+                        disabled_reason: None,
+                        required: false,
+                        scopes: None,
                     },
                 ))
             }
@@ -185,18 +194,21 @@ impl CodexAgent {
         let tool_timeout = Some(Duration::from_secs(30));
 
         // Add requested MCP servers
-        session_config.mcp_servers.extend(
-            mcp_servers
-                .into_iter()
-                .filter_map(|srv| self.build_mcp_server(srv, startup_timeout, tool_timeout)),
-        );
+        {
+            let mut servers = session_config.mcp_servers.get().clone();
+            servers.extend(
+                mcp_servers
+                    .into_iter()
+                    .filter_map(|srv| self.build_mcp_server(srv, startup_timeout, tool_timeout)),
+            );
 
-        // Add acp_fs MCP server if bridge is available
-        if let Some(bridge) = &self.fs_bridge {
-            let server_config = self.prepare_fs_mcp_server_config(session_id, bridge.as_ref())?;
-            session_config
-                .mcp_servers
-                .insert("acp_fs".to_string(), server_config);
+            // Add acp_fs MCP server if bridge is available
+            if let Some(bridge) = &self.fs_bridge {
+                let server_config = self.prepare_fs_mcp_server_config(session_id, bridge.as_ref())?;
+                servers.insert("acp_fs".to_string(), server_config);
+            }
+
+            let _ = session_config.mcp_servers.set(servers);
         }
 
         Ok(session_config)

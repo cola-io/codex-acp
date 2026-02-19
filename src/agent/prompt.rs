@@ -39,7 +39,7 @@ impl CodexAgent {
         let mut reason = ReasoningAggregator::new();
         let conversation = self
             .session_manager
-            .get_conversation(&args.session_id)
+            .get_thread(&args.session_id)
             .await?;
 
         let mut op_opt = None;
@@ -69,6 +69,7 @@ impl CodexAgent {
                 ContentBlock::Text(t) => {
                     items.push(UserInput::Text {
                         text: t.text.clone(),
+                        text_elements: vec![],
                     });
                 }
                 ContentBlock::Image(img) => {
@@ -82,12 +83,14 @@ impl CodexAgent {
                     if let EmbeddedResourceResource::TextResourceContents(trc) = &res.resource {
                         items.push(UserInput::Text {
                             text: trc.text.clone(),
+                            text_elements: vec![],
                         });
                     }
                 }
                 ContentBlock::ResourceLink(link) => {
                     items.push(UserInput::Text {
                         text: format!("Resource: {}", link.uri),
+                        text_elements: vec![],
                     });
                 }
                 // Handle any future ContentBlock variants
@@ -201,7 +204,7 @@ impl CodexAgent {
                         )
                         .await?;
                 }
-                EventMsg::WebSearchEnd(WebSearchEndEvent { call_id, query }) => {
+                EventMsg::WebSearchEnd(WebSearchEndEvent { call_id, query, .. }) => {
                     self.session_manager
                         .send_session_update(
                             &args.session_id,
@@ -265,6 +268,7 @@ impl CodexAgent {
                         conversation
                             .submit(Op::ExecApproval {
                                 id: event.id.clone(),
+                                turn_id: None,
                                 decision,
                             })
                             .await
@@ -311,6 +315,7 @@ impl CodexAgent {
                         success,
                         turn_id: _,
                         changes: _,
+                        status: _,
                     } = event;
 
                     let update = event_handler.on_patch_apply_end(&call_id, success, raw_output);
@@ -354,7 +359,7 @@ impl CodexAgent {
                         )
                         .await?;
                 }
-                EventMsg::TaskComplete(_) => {
+                EventMsg::TurnComplete(_) => {
                     break StopReason::EndTurn;
                 }
                 EventMsg::Error(ErrorEvent {
@@ -395,7 +400,7 @@ impl CodexAgent {
     pub(super) async fn cancel(&self, args: CancelNotification) -> Result<(), Error> {
         info!(?args, "Received cancel request");
         self.session_manager
-            .get_conversation(&args.session_id)
+            .get_thread(&args.session_id)
             .await?
             .submit(Op::Interrupt)
             .await

@@ -18,6 +18,7 @@ impl CodexAgent {
                 Some(Op::UserInput {
                     items: vec![UserInput::Text {
                         text: prompt.into(),
+                        text_elements: vec![],
                     }],
                     final_output_json_schema: None,
                 })
@@ -85,8 +86,8 @@ impl CodexAgent {
 
         // Account
         let (auth_mode, email, plan): (String, String, String) =
-            match self.auth_manager.read().ok().and_then(|am| am.auth()) {
-                Some(auth) => match auth.get_token_data().await {
+            match self.auth_manager.read().ok().and_then(|am| am.auth_cached()) {
+                Some(auth) => match auth.get_token_data() {
                     Ok(td) => {
                         let email = td
                             .id_token

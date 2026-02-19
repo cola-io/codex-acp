@@ -12,13 +12,11 @@ rust-version = "1.91"
 agent-client-protocol = { version = "0.9.2", features = ["unstable"] }
 anyhow = { version = "1" }
 async-trait = { version = "0.1" }
-codex-app-server-protocol = { git = "https://github.com/openai/codex", branch = "main" }
-codex-common = { git = "https://github.com/openai/codex", branch = "main", features = [
-  "cli",
-] }
-codex-core = { git = "https://github.com/openai/codex", branch = "main" }
-codex-protocol = { git = "https://github.com/openai/codex", branch = "main" }
-codex-utils-absolute-path = { git = "https://github.com/openai/codex", branch = "main" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex", rev = "74d1f7b2b3af383bd3605344f3c842b194fd1d70" }
+codex-utils-approval-presets = { git = "https://github.com/openai/codex", rev = "74d1f7b2b3af383bd3605344f3c842b194fd1d70" }
+codex-core = { git = "https://github.com/openai/codex", rev = "74d1f7b2b3af383bd3605344f3c842b194fd1d70" }
+codex-protocol = { git = "https://github.com/openai/codex", rev = "74d1f7b2b3af383bd3605344f3c842b194fd1d70" }
+codex-utils-absolute-path = { git = "https://github.com/openai/codex", rev = "74d1f7b2b3af383bd3605344f3c842b194fd1d70" }
 diffy = { version = "0.4.2" }
 rmcp = { version = "0.12.0", features = [
   "macros",
@@ -42,3 +40,10 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-appender = { version = "0.2.3" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+
+[patch.crates-io]
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }
+
+[patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

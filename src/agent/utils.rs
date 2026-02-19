@@ -7,7 +7,7 @@ use std::{
 use agent_client_protocol::{
     ModelId, ModelInfo, SessionMode, SessionModeId, SessionModeState, ToolCallLocation, ToolKind,
 };
-use codex_common::approval_presets::{ApprovalPreset, builtin_approval_presets};
+use codex_utils_approval_presets::{ApprovalPreset, builtin_approval_presets};
 use codex_core::{
     config::{Config, profile::ConfigProfile},
     protocol::McpInvocation,
@@ -175,8 +175,8 @@ pub fn current_mode_id_for_config(config: &Config) -> Option<SessionModeId> {
     APPROVAL_PRESETS
         .iter()
         .find(|preset| {
-            preset.approval == config.approval_policy.value()
-                && preset.sandbox == config.sandbox_policy.get().clone()
+            preset.approval == config.permissions.approval_policy.value()
+                && preset.sandbox == config.permissions.sandbox_policy.get().clone()
         })
         .map(|preset| SessionModeId::new(preset.id))
 }

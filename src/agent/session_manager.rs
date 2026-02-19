@@ -5,11 +5,11 @@ use agent_client_protocol::{
     SessionNotification, SessionUpdate,
 };
 use codex_core::{
-    CodexConversation, ConversationManager,
+    CodexThread, ThreadManager,
     config::Config,
     protocol::{AskForApproval, Op, SandboxPolicy, TokenUsage},
 };
-use codex_protocol::{ConversationId, openai_models::ReasoningEffort};
+use codex_protocol::{ThreadId, openai_models::ReasoningEffort};
 use tokio::sync::{
     mpsc::UnboundedSender,
     oneshot::{self, Sender},
@@ -22,12 +22,12 @@ use crate::agent::utils;
 /// Notes:
 /// - `fs_session_id` is the session id used by the FS bridge. It may differ
 ///   from the ACP session id (which is the key in the `sessions` map).
-/// - `conversation` is lazily loaded on demand; `None` until first use.
+/// - `thread` is lazily loaded on demand; `None` until first use.
 /// - Reasoning text is aggregated across streaming events.
 #[derive(Clone)]
 pub struct SessionState {
     pub fs_session_id: String,
-    pub conversation: Option<Arc<CodexConversation>>,
+    pub thread: Option<Arc<CodexThread>>,
     pub current_approval: AskForApproval,
     pub current_sandbox: SandboxPolicy,
     pub current_mode: SessionModeId,
@@ -40,7 +40,7 @@ impl SessionState {
     /// Create a new SessionState initialized from config.
     pub fn new(
         fs_session_id: String,
-        conversation: Option<Arc<CodexConversation>>,
+        thread: Option<Arc<CodexThread>>,
         config: &Config,
         current_mode: SessionModeId,
     ) -> Self {
@@ -48,9 +48,9 @@ impl SessionState {
         let model_name = config.model.as_deref().unwrap_or("unknown");
         Self {
             fs_session_id,
-            conversation,
-            current_approval: config.approval_policy.value(),
-            current_sandbox: config.sandbox_policy.get().clone(),
+            thread,
+            current_approval: config.permissions.approval_policy.value(),
+            current_sandbox: config.permissions.sandbox_policy.get().clone(),
             current_mode,
             current_model: Some(format!("{}@{}", provider_id, model_name)),
             current_effort: config.model_reasoning_effort,
@@ -59,7 +59,7 @@ impl SessionState {
     }
 }
 
-/// Manages session state, conversations, and client communication.
+/// Manages session state, threads, and client communication.
 ///
 /// This struct centralizes all session-related operations including:
 /// - Session state storage and mutation
@@ -69,7 +69,7 @@ impl SessionState {
 pub struct SessionManager {
     sessions: Rc<RefCell<HashMap<String, SessionState>>>,
     session_update_tx: UnboundedSender<(SessionNotification, Sender<()>)>,
-    conversation_manager: Arc<ConversationManager>,
+    thread_manager: Arc<ThreadManager>,
     client_capabilities: RefCell<ClientCapabilities>,
 }
 
@@ -77,12 +77,12 @@ impl SessionManager {
     /// Create a new SessionManager.
     pub fn new(
         session_update_tx: UnboundedSender<(SessionNotification, Sender<()>)>,
-        conversation_manager: Arc<ConversationManager>,
+        thread_manager: Arc<ThreadManager>,
     ) -> Self {
         Self {
             sessions: Rc::new(RefCell::new(HashMap::new())),
             session_update_tx,
-            conversation_manager,
+            thread_manager,
             client_capabilities: RefCell::new(Default::default()),
         }
     }
@@ -148,44 +148,44 @@ impl SessionManager {
         })
     }
 
-    /// Get a reference to the conversation manager.
-    pub fn conversation_manager(&self) -> Arc<ConversationManager> {
-        self.conversation_manager.clone()
+    /// Get a reference to the thread manager.
+    pub fn thread_manager(&self) -> Arc<ThreadManager> {
+        self.thread_manager.clone()
     }
 
-    /// Get or load the conversation for a session.
+    /// Get or load the thread for a session.
     ///
-    /// This will reuse a cached conversation if available, otherwise load it
-    /// from the conversation manager and cache it in the session state.
-    pub async fn get_conversation(
+    /// This will reuse a cached thread if available, otherwise load it
+    /// from the thread manager and cache it in the session state.
+    pub async fn get_thread(
         &self,
         session_id: &SessionId,
-    ) -> Result<Arc<CodexConversation>, Error> {
-        let conversation_opt = {
+    ) -> Result<Arc<CodexThread>, Error> {
+        let thread_opt = {
             let sessions = self.sessions.borrow();
             let state = sessions
                 .get(session_id.0.as_ref())
                 .ok_or_else(|| Error::invalid_params().data("session not found"))?;
-            state.conversation.clone()
+            state.thread.clone()
         };
 
-        if let Some(conversation) = conversation_opt {
-            return Ok(conversation);
+        if let Some(thread) = thread_opt {
+            return Ok(thread);
         }
 
-        let conversation_id = ConversationId::from_string(session_id.0.as_ref())
-            .map_err(|e| Error::from(anyhow::anyhow!(e)))?;
+        let thread_id = ThreadId::from_string(session_id.0.as_ref())
+            .map_err(|e| Error::from(anyhow::anyhow!("{}", e)))?;
 
-        let conversation = self
-            .conversation_manager
-            .get_conversation(conversation_id)
+        let thread = self
+            .thread_manager
+            .get_thread(thread_id)
             .await
-            .map_err(|e| Error::from(anyhow::anyhow!(e)))?;
+            .map_err(|e| Error::from(anyhow::anyhow!("{}", e)))?;
 
         self.with_session_state_mut(session_id, |state| {
-            state.conversation = Some(conversation.clone());
+            state.thread = Some(thread.clone());
         });
-        Ok(conversation)
+        Ok(thread)
     }
 
     /// Set client capabilities.
@@ -262,7 +262,7 @@ impl SessionManager {
                 .ok_or_else(|| Error::invalid_params().data("session not found"))?;
             build_override(state)
         };
-        self.get_conversation(session_id)
+        self.get_thread(session_id)
             .await?
             .submit(op)
             .await
@@ -280,7 +280,7 @@ impl Clone for SessionManager {
         Self {
             sessions: self.sessions.clone(),
             session_update_tx: self.session_update_tx.clone(),
-            conversation_manager: self.conversation_manager.clone(),
+            thread_manager: self.thread_manager.clone(),
             client_capabilities: self.client_capabilities.clone(),
         }
     }
