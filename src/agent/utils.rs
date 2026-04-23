@@ -218,6 +218,25 @@ pub fn current_model_id_from_config(config: &Config) -> ModelId {
     ModelId::new(format!("{}@{}", config.model_provider_id, model_name))
 }
 
+/// Return the model string format expected by Codex turn-context overrides.
+///
+/// Builtin providers expect the raw model name, while custom providers use the
+/// ACP-facing `provider@model` format.
+pub fn current_model_override(provider_id: &str, model_name: Option<&str>) -> Option<String> {
+    model_name.map(|model_name| {
+        if is_custom_provider(provider_id) {
+            format!("{}@{}", provider_id, model_name)
+        } else {
+            model_name.to_owned()
+        }
+    })
+}
+
+/// Return the current model in the format expected by Codex overrides.
+pub fn current_model_override_from_config(config: &Config) -> Option<String> {
+    current_model_override(&config.model_provider_id, config.model.as_deref())
+}
+
 /// Build a `ModelInfo` for display to the client.
 fn build_model_info(config: &Config, provider_id: &str, model_name: &str) -> Option<ModelInfo> {
     let provider_info = config.model_providers.get(provider_id)?;
@@ -323,4 +342,30 @@ pub fn parse_and_validate_model(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::current_model_override;
+
+    #[test]
+    fn current_model_override_uses_raw_name_for_builtin_providers() {
+        assert_eq!(
+            current_model_override("openai", Some("gpt-5.3-codex")),
+            Some("gpt-5.3-codex".to_string())
+        );
+    }
+
+    #[test]
+    fn current_model_override_uses_provider_prefix_for_custom_providers() {
+        assert_eq!(
+            current_model_override("ollama", Some("qwen3-coder")),
+            Some("ollama@qwen3-coder".to_string())
+        );
+    }
+
+    #[test]
+    fn current_model_override_handles_missing_model() {
+        assert_eq!(current_model_override("openai", None), None);
+    }
 }

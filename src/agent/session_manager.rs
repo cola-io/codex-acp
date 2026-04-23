@@ -44,15 +44,13 @@ impl SessionState {
         config: &Config,
         current_mode: SessionModeId,
     ) -> Self {
-        let provider_id = &config.model_provider_id;
-        let model_name = config.model.as_deref().unwrap_or("unknown");
         Self {
             fs_session_id,
             conversation,
             current_approval: config.approval_policy.value(),
             current_sandbox: config.sandbox_policy.get().clone(),
             current_mode,
-            current_model: Some(format!("{}@{}", provider_id, model_name)),
+            current_model: utils::current_model_override_from_config(config),
             current_effort: config.model_reasoning_effort,
             token_usage: None,
         }
