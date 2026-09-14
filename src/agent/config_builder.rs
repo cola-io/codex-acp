@@ -33,7 +33,7 @@ impl CodexAgent {
                 command: exe_path.to_string_lossy().into_owned(),
                 args: vec!["--acp-fs-mcp".into()],
                 env: Some(env),
-                env_vars: vec![],
+                env_vars: vec!["CODEX_LOG_STDERR".into()],
                 cwd: None,
             },
             enabled: true,

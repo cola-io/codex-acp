@@ -72,7 +72,7 @@ pub fn init_from_env() -> Result<()> {
     let mut file_guard: Option<WorkerGuard> = None;
 
     let stderr_layer = if stderr_enabled {
-        Some(fmt::layer().with_target(true))
+        Some(fmt::layer().with_target(true).with_writer(std::io::stderr))
     } else {
         None
     };
@@ -143,4 +143,64 @@ fn non_blocking_writer_for_daily<P: AsRef<Path>>(
     }
     let file_appender = tracing_appender::rolling::daily(dir, file_name);
     Ok(tracing_appender::non_blocking(file_appender))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    const LOG_MARKER: &str = "codex-acp logging regression marker";
+
+    #[test]
+    fn logging_subprocess() {
+        if std::env::var_os("CODEX_ACP_LOGGING_TEST").is_none() {
+            return;
+        }
+
+        super::init_from_env().unwrap();
+        tracing::info!("{LOG_MARKER}");
+    }
+
+    fn check_logging(stderr_setting: Option<&str>, expect_log: bool) {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "logging::tests::logging_subprocess",
+                "--nocapture",
+            ])
+            .env("CODEX_ACP_LOGGING_TEST", "1")
+            .env("RUST_LOG", "info")
+            .env_remove("CODEX_LOG_FILE")
+            .env_remove("CODEX_LOG_DIR")
+            .env_remove("CODEX_LOG_STDERR");
+        if let Some(value) = stderr_setting {
+            command.env("CODEX_LOG_STDERR", value);
+        }
+
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            !stdout.contains(LOG_MARKER),
+            "log leaked to stdout: {stdout}"
+        );
+        assert_eq!(stderr.contains(LOG_MARKER), expect_log, "stderr: {stderr}");
+    }
+
+    #[test]
+    fn default_logging_uses_stderr() {
+        check_logging(None, true);
+    }
+
+    #[test]
+    fn enabled_logging_uses_stderr() {
+        check_logging(Some("1"), true);
+    }
+
+    #[test]
+    fn disabled_logging_is_silent() {
+        check_logging(Some("0"), false);
+    }
 }
